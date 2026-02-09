@@ -20,6 +20,7 @@ from yellowstars.strategies.moving_average import MovingAverageCrossoverStrategy
 from yellowstars.backtest.engine import BacktestEngine
 from yellowstars.backtest.metrics import PerformanceMetrics
 from yellowstars.reporting.report_generator import ReportGenerator
+from yellowstars.reporting.excel_exporter import ExcelExporter
 
 
 def main():
@@ -72,11 +73,20 @@ def main():
     pm = PerformanceMetrics(result.equity_curve, result.benchmark_curve, result.trades)
     print(pm.summary_text())
 
-    # Save reports
+    # Save reports (JSON/HTML)
     reporter = ReportGenerator(settings.reports_directory)
     reporter.generate_backtest_report(result)
 
-    logger.info(f"Reports saved to {settings.reports_directory}/")
+    # Save Excel reports to LocalData/
+    excel = ExcelExporter(output_dir=settings.data_directory)
+    excel_path = excel.export_full_backtest(result)
+    logger.info(f"Excel backtest report: {excel_path}")
+
+    # Save raw history data as Excel
+    excel.export_history_data(data, underlying)
+    logger.info(f"History data exported for {underlying}")
+
+    logger.info(f"Reports saved to {settings.reports_directory}/ and {settings.data_directory}/")
     logger.info("Backtest complete!")
 
 

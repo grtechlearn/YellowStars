@@ -25,6 +25,7 @@ from yellowstars.core.models import Asset, DataProviderConfig, MarketType, TimeF
 from yellowstars.data.cache.local_cache import LocalCache
 from yellowstars.data.providers.base import BaseDataProvider
 from yellowstars.data.providers.polygon_provider import PolygonDataProvider
+from yellowstars.data.providers.polygon_flatfile_provider import PolygonFreeProvider
 from yellowstars.data.providers.yahoo_provider import YahooDataProvider
 from yellowstars.data.providers.crypto_provider import CryptoDataProvider
 
@@ -35,6 +36,10 @@ class DataManager:
     Provides a unified interface to fetch data from multiple providers
     with automatic caching, failover, and validation.
 
+    IMPORTANT: For Polygon Free Tier, enforces single-download-per-day policy.
+    Once data is downloaded successfully, it is cached locally and reused
+    for ALL strategy execution and trading logic throughout the day.
+
     Usage:
         dm = DataManager(config)
         dm.initialize()
@@ -42,7 +47,9 @@ class DataManager:
     """
 
     PROVIDER_MAP = {
-        "polygon": PolygonDataProvider,
+        "polygon": PolygonFreeProvider,       # Default: Free tier optimized
+        "polygon_paid": PolygonDataProvider,   # Paid tier with higher limits
+        "polygon_free": PolygonFreeProvider,   # Explicit free tier
         "yahoo": YahooDataProvider,
         "crypto": CryptoDataProvider,
         "ccxt": CryptoDataProvider,
