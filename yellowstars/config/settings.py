@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Optional
 
 import yaml
+from dotenv import load_dotenv
 from loguru import logger
 
 from yellowstars.core.models import (
@@ -31,7 +32,7 @@ class StrategySettings:
     name: str = "malik_white_light"
     enabled: bool = True
     # Trend Following
-    fast_ma_period: int = 50
+    fast_ma_period: int = 20
     slow_ma_period: int = 250
     # Mean Reversion / Velocity
     roc_period: int = 20           # Rate of Change lookback
@@ -219,7 +220,7 @@ def _dict_to_settings(config: dict) -> Settings:
             settings.strategies.append(StrategySettings(
                 name=s.get("name", "default"),
                 enabled=s.get("enabled", True),
-                fast_ma_period=s.get("fast_ma_period", 50),
+                fast_ma_period=s.get("fast_ma_period", 20),
                 slow_ma_period=s.get("slow_ma_period", 250),
                 roc_period=s.get("roc_period", 20),
                 roc_threshold=s.get("roc_threshold", -5.0),
@@ -245,6 +246,9 @@ def load_settings(config_path: str = "config.yaml") -> Settings:
     Returns:
         Populated Settings dataclass.
     """
+    # Load .env file for API keys and secrets
+    load_dotenv()
+
     config = {}
 
     # Load from YAML if exists

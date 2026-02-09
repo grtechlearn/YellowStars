@@ -6,16 +6,16 @@
 # environment variables: YS_SECTION__KEY=value
 # =============================================
 
-trading_mode: "paper"    # backtest | paper | live
+trading_mode: "paper" # backtest | paper | live
 log_level: "INFO"
 data_directory: "data"
 reports_directory: "reports"
 
 # --- Data Provider ---
 data_provider:
-  name: "polygon"           # polygon | yahoo | alpha_vantage | ccxt
-  api_key: ""               # Set via YS_DATA_PROVIDER__API_KEY
-  base_url: ""
+  name: "polygon" # polygon | yahoo | alpha_vantage | ccxt
+  api_key: "t97Bwvp97pwQD0CNvxxzKbPfmfHnNewy" # Set via YS_DATA_PROVIDER__API_KEY
+  base_url: "https://files.massive.com"
   rate_limit_per_minute: 5
   cache_enabled: true
   cache_directory: "data/cache"
@@ -23,9 +23,9 @@ data_provider:
 # --- Broker ---
 broker:
   name: "alpaca"
-  api_key: ""               # Set via YS_BROKER__API_KEY
-  api_secret: ""            # Set via YS_BROKER__API_SECRET
-  base_url: ""
+  api_key: "PKPH6WUALV4OOGUUMC2NALAFIN" # Set via YS_BROKER__API_KEY
+  api_secret: "Gj3P3Ye5wV5qwmfAgf9SXtmk6xGn2zK2cD5B5h94FEt8" # Set via YS_BROKER__API_SECRET
+  base_url: "https://paper-api.alpaca.markets/v2"
   paper_trading: true
   max_order_size: 100000.0
   commission_per_trade: 0.0
@@ -59,7 +59,7 @@ alerts:
 # --- Backtesting ---
 backtest:
   start_date: "1985-01-01"
-  end_date: ""              # Empty = today
+  end_date: "" # Empty = today
   initial_capital: 100000.0
   commission_per_trade: 0.0
   slippage_pct: 0.05
@@ -84,7 +84,7 @@ strategies:
   - name: "dual_ma_crossover"
     enabled: false
     fast_ma_period: 20
-    slow_ma_period: 100
+    slow_ma_period: 250
     max_position_pct: 1.0
     long_asset: "TQQQ"
     short_asset: "SQQQ"

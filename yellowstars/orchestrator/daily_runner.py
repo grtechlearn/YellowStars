@@ -37,6 +37,7 @@ from yellowstars.data.manager import DataManager
 from yellowstars.execution.broker_base import BaseBroker
 from yellowstars.execution.risk_manager import RiskManager
 from yellowstars.reporting.report_generator import ReportGenerator
+from yellowstars.reporting.excel_exporter import ExcelExporter
 from yellowstars.reporting.tax_calculator import TaxCalculator
 from yellowstars.strategies.base import BaseStrategy
 
@@ -71,6 +72,7 @@ class DailyRunner:
         self.notifier = notifier or Notifier(settings.alerts)
         self.risk_manager = RiskManager(settings.risk)
         self.report_generator = ReportGenerator(settings.reports_directory)
+        self.excel_exporter = ExcelExporter(output_dir=settings.data_directory)
         self.tax_calculator = TaxCalculator(settings.tax)
 
         self._today_trades: list[Trade] = []
@@ -409,8 +411,16 @@ class DailyRunner:
         bt_engine = BacktestEngine(self.settings.backtest)
         result = bt_engine.run(self.strategy, data)
 
-        # Generate full report
+        # Generate full report (JSON/HTML)
         metrics = self.report_generator.generate_backtest_report(result)
+
+        # Export to Excel in LocalData/
+        try:
+            excel_path = self.excel_exporter.export_full_backtest(result)
+            self.excel_exporter.export_history_data(data, underlying)
+            logger.info(f"Excel reports saved: {excel_path}")
+        except Exception as e:
+            logger.warning(f"Excel export failed: {e}")
 
         return {
             "status": "success",
