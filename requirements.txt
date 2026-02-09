@@ -1,0 +1,70 @@
+# ===========================================
+# YellowStars - Systematic Trading Platform
+# Requirements
+# ===========================================
+
+# --- Core Data & Analysis ---
+numpy>=1.24.0
+pandas>=2.0.0
+scipy>=1.11.0
+
+# --- Market Data Providers ---
+polygon-api-client>=1.12.0
+yfinance>=0.2.28
+alpha-vantage>=2.3.1
+ccxt>=4.0.0                  # Crypto exchange integration
+
+# --- Technical Analysis ---
+# ta-lib>=0.4.28             # Optional: needs system TA-Lib (brew install ta-lib)
+pandas-ta>=0.3.14b           # Pure Python technical indicators fallback
+
+# --- Backtesting ---
+# Custom engine built in-house (no external dependency)
+
+# --- Brokerage / Execution ---
+alpaca-trade-api>=3.0.0
+alpaca-py>=0.21.0
+
+# --- Database & Caching ---
+sqlalchemy>=2.0.0
+pyarrow>=13.0.0              # Parquet support for fast data storage
+
+# --- Scheduling & Orchestration ---
+schedule>=1.2.0
+apscheduler>=3.10.0
+
+# --- Alerting & Notifications ---
+requests>=2.31.0             # HTTP for webhooks
+twilio>=8.0.0                # SMS alerts
+apprise>=1.6.0               # Multi-platform notifications
+
+# --- Reporting & Visualization ---
+matplotlib>=3.7.0
+plotly>=5.17.0
+jinja2>=3.1.0                # HTML report templates
+
+# --- Web UI (Monitoring Dashboard) ---
+flask>=3.0.0
+flask-socketio>=5.3.0
+flask-cors>=4.0.0
+
+# --- Configuration ---
+pyyaml>=6.0
+python-dotenv>=1.0.0
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+
+# --- Logging ---
+loguru>=0.7.0
+rich>=13.0.0                 # Rich console output
+
+# --- Testing ---
+pytest>=7.4.0
+pytest-cov>=4.1.0
+pytest-asyncio>=0.21.0
+
+# --- Utilities ---
+click>=8.1.0                 # CLI framework
+tabulate>=0.9.0              # Table formatting
+python-dateutil>=2.8.0
+pytz>=2023.3

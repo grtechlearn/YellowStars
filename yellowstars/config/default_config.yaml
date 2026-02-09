@@ -1,0 +1,92 @@
+# =============================================
+# YellowStars - Default Configuration
+# =============================================
+# Copy this file to config.yaml and customize.
+# Sensitive values (API keys) should be set via
+# environment variables: YS_SECTION__KEY=value
+# =============================================
+
+trading_mode: "paper"    # backtest | paper | live
+log_level: "INFO"
+data_directory: "data"
+reports_directory: "reports"
+
+# --- Data Provider ---
+data_provider:
+  name: "polygon"           # polygon | yahoo | alpha_vantage | ccxt
+  api_key: ""               # Set via YS_DATA_PROVIDER__API_KEY
+  base_url: ""
+  rate_limit_per_minute: 5
+  cache_enabled: true
+  cache_directory: "data/cache"
+
+# --- Broker ---
+broker:
+  name: "alpaca"
+  api_key: ""               # Set via YS_BROKER__API_KEY
+  api_secret: ""            # Set via YS_BROKER__API_SECRET
+  base_url: ""
+  paper_trading: true
+  max_order_size: 100000.0
+  commission_per_trade: 0.0
+  commission_per_share: 0.0
+
+# --- Risk Management ---
+risk:
+  max_portfolio_drawdown_pct: 30.0
+  max_single_position_pct: 100.0
+  max_daily_loss_pct: 10.0
+  min_cash_reserve_pct: 0.0
+  max_leverage: 1.0
+  stop_loss_pct: null
+
+# --- Tax Configuration ---
+tax:
+  country: "US"
+  short_term_rate: 0.37
+  long_term_rate: 0.20
+  state_tax_rate: 0.0
+  wash_sale_rule: true
+  tax_loss_harvesting: false
+
+# --- Alerting ---
+alerts:
+  enabled: true
+  telegram_bot_token: ""
+  telegram_chat_id: ""
+  discord_webhook_url: ""
+
+# --- Backtesting ---
+backtest:
+  start_date: "1985-01-01"
+  end_date: ""              # Empty = today
+  initial_capital: 100000.0
+  commission_per_trade: 0.0
+  slippage_pct: 0.05
+  benchmark_symbol: "QQQ"
+
+# --- Strategies ---
+strategies:
+  - name: "malik_white_light"
+    enabled: true
+    fast_ma_period: 50
+    slow_ma_period: 250
+    roc_period: 20
+    roc_threshold: -5.0
+    max_position_pct: 1.0
+    min_position_pct: 0.0
+    long_asset: "TQQQ"
+    short_asset: "SQQQ"
+    benchmark_asset: "QQQ"
+    underlying_index: "NDX"
+    execution_minutes_before_close: 15
+
+  - name: "dual_ma_crossover"
+    enabled: false
+    fast_ma_period: 20
+    slow_ma_period: 100
+    max_position_pct: 1.0
+    long_asset: "TQQQ"
+    short_asset: "SQQQ"
+    underlying_index: "NDX"
+    execution_minutes_before_close: 15
