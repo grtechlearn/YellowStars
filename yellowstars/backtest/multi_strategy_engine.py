@@ -200,10 +200,14 @@ class MultiStrategyEngine:
         commission_per_trade: float,
         slippage_pct: float,
     ) -> StrategyResult:
-        """Standard strategy: hold positions overnight, track close-to-close.
+        """Standard strategy: react to BUY/SELL signals, hold positions overnight.
 
-        For Buy-and-Hold: buy on day 1, hold forever.
+        Handles:
+        - Buy-and-Hold (buy on first bar, hold forever)
+        - Signal-based strategies (buy on BUY signal, sell on SELL signal)
         """
+        from yellowstars.core.models import SignalAction
+
         cash = initial_capital
         shares = 0.0
         orders: list[OrderRecord] = []
@@ -218,51 +222,95 @@ class MultiStrategyEngine:
             row = signals_df.iloc[i]
             timestamp = signals_df.index[i]
             close_price = row["close"]
+            signal = row.get("signal", SignalAction.HOLD.value)
             target_pct = row.get("position_pct", 0.0)
 
-            # Calculate current portfolio value
-            position_value = shares * close_price
-            portfolio_value = cash + position_value
-
-            # Determine target shares
-            target_value = portfolio_value * target_pct
-            current_value = position_value
-
-            # First bar: initial buy
-            if i == 0 and target_pct > 0 and shares == 0:
+            # --- BUY signal: enter position ---
+            if signal == SignalAction.BUY.value and shares == 0 and target_pct > 0:
                 buy_price = close_price
                 slippage_cost = buy_price * slippage_pct
                 effective_price = buy_price + slippage_cost
 
-                available = cash - commission_per_trade
-                buy_shares = available / effective_price
-                cost = buy_shares * effective_price + commission_per_trade
+                # Size by target_pct (conviction)
+                portfolio_value = cash
+                buy_value = portfolio_value * target_pct
+                available = min(buy_value, cash) - commission_per_trade
+                if available > 0:
+                    buy_shares = available / effective_price
+                    cost = buy_shares * effective_price + commission_per_trade
+
+                    order_counter += 1
+                    orders.append(OrderRecord(
+                        order_id=order_counter,
+                        date=timestamp,
+                        strategy=strategy.name,
+                        symbol=symbol,
+                        side="BUY",
+                        quantity=buy_shares,
+                        price=buy_price,
+                        value=buy_shares * buy_price,
+                        commission=commission_per_trade,
+                        slippage=buy_shares * slippage_cost,
+                        net_value=cost,
+                        portfolio_value=portfolio_value,
+                        cash_after=cash - cost,
+                        reason="signal_buy",
+                    ))
+
+                    cash -= cost
+                    shares = buy_shares
+                    entry_price = buy_price
+                    entry_time = timestamp
+
+            # --- SELL signal: exit position ---
+            elif signal == SignalAction.SELL.value and shares > 0:
+                sell_price = close_price
+                slippage_cost = sell_price * slippage_pct
+                effective_price = sell_price - slippage_cost
+
+                proceeds = shares * effective_price - commission_per_trade
 
                 order_counter += 1
-                order = OrderRecord(
+                orders.append(OrderRecord(
                     order_id=order_counter,
                     date=timestamp,
                     strategy=strategy.name,
                     symbol=symbol,
-                    side="BUY",
-                    quantity=buy_shares,
-                    price=buy_price,
-                    value=buy_shares * buy_price,
+                    side="SELL",
+                    quantity=shares,
+                    price=sell_price,
+                    value=shares * sell_price,
                     commission=commission_per_trade,
-                    slippage=buy_shares * slippage_cost,
-                    net_value=cost,
-                    portfolio_value=portfolio_value,
-                    cash_after=cash - cost,
-                    reason="initial_buy",
-                )
-                orders.append(order)
+                    slippage=shares * slippage_cost,
+                    net_value=proceeds,
+                    portfolio_value=cash + proceeds,
+                    cash_after=cash + proceeds,
+                    reason="signal_sell",
+                ))
 
-                cash -= cost
-                shares = buy_shares
-                entry_price = buy_price
-                entry_time = timestamp
+                # Record trade
+                pnl = (sell_price - entry_price) * shares - 2 * commission_per_trade
+                trades.append(Trade(
+                    side=OrderSide.SELL,
+                    entry_price=entry_price,
+                    exit_price=sell_price,
+                    quantity=shares,
+                    entry_time=entry_time,
+                    exit_time=timestamp,
+                    pnl=pnl,
+                    pnl_pct=((sell_price / entry_price) - 1) * 100 if entry_price > 0 else 0,
+                    commission=2 * commission_per_trade,
+                    net_pnl=pnl,
+                    holding_period_days=(timestamp - entry_time).days if entry_time else 0,
+                    strategy_name=strategy.name,
+                ))
 
-            # Last bar: sell everything for accounting
+                cash += proceeds
+                shares = 0
+                entry_price = 0.0
+                entry_time = None
+
+            # --- Last bar: close any open position for accounting ---
             if i == len(signals_df) - 1 and shares > 0:
                 sell_price = close_price
                 slippage_cost = sell_price * slippage_pct
@@ -271,7 +319,7 @@ class MultiStrategyEngine:
                 proceeds = shares * effective_price - commission_per_trade
 
                 order_counter += 1
-                order = OrderRecord(
+                orders.append(OrderRecord(
                     order_id=order_counter,
                     date=timestamp,
                     strategy=strategy.name,
@@ -286,12 +334,10 @@ class MultiStrategyEngine:
                     portfolio_value=cash + proceeds,
                     cash_after=cash + proceeds,
                     reason="final_sell",
-                )
-                orders.append(order)
+                ))
 
-                # Record trade
                 pnl = (sell_price - entry_price) * shares - 2 * commission_per_trade
-                trade = Trade(
+                trades.append(Trade(
                     side=OrderSide.SELL,
                     entry_price=entry_price,
                     exit_price=sell_price,
@@ -304,8 +350,7 @@ class MultiStrategyEngine:
                     net_pnl=pnl,
                     holding_period_days=(timestamp - entry_time).days if entry_time else 0,
                     strategy_name=strategy.name,
-                )
-                trades.append(trade)
+                ))
 
                 cash += proceeds
                 shares = 0
