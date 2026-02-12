@@ -102,7 +102,7 @@ if i_strategy == "Buy-Sell-Close" and i_useDate and time > i_endDate
 // the other strategy's equity curve manually for side-by-side comparison.
 
 // --- Simulated Buy-and-Hold equity ---
-var float sim_bh_equity  = i_capital
+var float sim_bh_equity  = na
 var float sim_bh_shares  = 0.0
 var bool  sim_bh_entered = false
 
@@ -110,63 +110,69 @@ if inDateRange and not sim_bh_entered
     sim_bh_shares  := i_capital / close
     sim_bh_entered := true
 
-sim_bh_equity := sim_bh_entered ? sim_bh_shares * close : i_capital
+if sim_bh_entered
+    sim_bh_equity := sim_bh_shares * close
 
 // --- Simulated Buy-Sell-Close equity ---
-var float sim_bsc_equity = i_capital
+var float sim_bsc_equity = na
+var bool  sim_bsc_started = false
 
 if inDateRange and not na(open) and not na(close) and open > 0
-    float dayReturn    = (close - open) / open
-    sim_bsc_equity    := sim_bsc_equity * (1.0 + dayReturn)
+    if not sim_bsc_started
+        sim_bsc_equity  := i_capital
+        sim_bsc_started := true
+    float dayReturn  = (close - open) / open
+    sim_bsc_equity  := sim_bsc_equity * (1.0 + dayReturn)
+
+// Assign safe values for calculations (avoid na in math)
+float safe_bh_equity  = nz(sim_bh_equity, i_capital)
+float safe_bsc_equity = nz(sim_bsc_equity, i_capital)
 
 // Pick the one we're NOT running as the overlay
-float overlayEquity = i_strategy == "Buy-and-Hold" ? sim_bsc_equity : sim_bh_equity
-// overlayName removed — Pine Script plot() title requires const string
+float overlayEquity = i_strategy == "Buy-and-Hold" ? safe_bsc_equity : safe_bh_equity
 
 // =============================================================================
 // DRAWDOWN CALCULATION
 // =============================================================================
 
 // Active strategy drawdown (from strategy.equity)
-var float peak_active = i_capital
+var float peak_active = 0.0
 peak_active := math.max(peak_active, strategy.equity)
 float dd_active = peak_active > 0 ? (strategy.equity - peak_active) / peak_active * 100.0 : 0.0
 
 // Simulated overlay drawdown
-var float peak_overlay = i_capital
+var float peak_overlay = 0.0
 peak_overlay := math.max(peak_overlay, overlayEquity)
 float dd_overlay = peak_overlay > 0 ? (overlayEquity - peak_overlay) / peak_overlay * 100.0 : 0.0
 
 // Buy-and-Hold drawdown (always computed for dashboard)
-var float peak_bh = i_capital
-peak_bh := math.max(peak_bh, sim_bh_equity)
-float dd_bh = peak_bh > 0 ? (sim_bh_equity - peak_bh) / peak_bh * 100.0 : 0.0
+var float peak_bh = 0.0
+peak_bh := math.max(peak_bh, safe_bh_equity)
+float dd_bh = peak_bh > 0 ? (safe_bh_equity - peak_bh) / peak_bh * 100.0 : 0.0
 
 // Buy-Sell-Close drawdown
-var float peak_bsc = i_capital
-peak_bsc := math.max(peak_bsc, sim_bsc_equity)
-float dd_bsc = peak_bsc > 0 ? (sim_bsc_equity - peak_bsc) / peak_bsc * 100.0 : 0.0
+var float peak_bsc = 0.0
+peak_bsc := math.max(peak_bsc, safe_bsc_equity)
+float dd_bsc = peak_bsc > 0 ? (safe_bsc_equity - peak_bsc) / peak_bsc * 100.0 : 0.0
 
 // =============================================================================
 // PERFORMANCE METRICS
 // =============================================================================
 
-// --- Helpers ---
 int totalBars    = bar_index + 1
 float tradingYrs = totalBars / 252.0
 
 // --- Buy-and-Hold metrics ---
-float bh_totalRet  = sim_bh_equity > 0 ? (sim_bh_equity / i_capital - 1.0) * 100.0 : 0.0
-float bh_cagr      = tradingYrs > 0 and sim_bh_equity > 0 ? (math.pow(sim_bh_equity / i_capital, 1.0 / tradingYrs) - 1.0) * 100.0 : 0.0
-float bh_maxDD     = dd_bh
+float bh_totalRet  = safe_bh_equity > 0 ? (safe_bh_equity / i_capital - 1.0) * 100.0 : 0.0
+float bh_cagr      = tradingYrs > 0 and safe_bh_equity > 0 ? (math.pow(safe_bh_equity / i_capital, 1.0 / tradingYrs) - 1.0) * 100.0 : 0.0
 
-// Track min drawdown (max drawdown is most negative)
+// Track worst drawdown (most negative value)
 var float bh_maxDD_ever = 0.0
 bh_maxDD_ever := math.min(bh_maxDD_ever, dd_bh)
 
 // --- Buy-Sell-Close metrics ---
-float bsc_totalRet = sim_bsc_equity > 0 ? (sim_bsc_equity / i_capital - 1.0) * 100.0 : 0.0
-float bsc_cagr     = tradingYrs > 0 and sim_bsc_equity > 0 ? (math.pow(math.max(sim_bsc_equity, 0.01) / i_capital, 1.0 / tradingYrs) - 1.0) * 100.0 : 0.0
+float bsc_totalRet = safe_bsc_equity > 0 ? (safe_bsc_equity / i_capital - 1.0) * 100.0 : 0.0
+float bsc_cagr     = tradingYrs > 0 and safe_bsc_equity > 0 ? (math.pow(math.max(safe_bsc_equity, 0.01) / i_capital, 1.0 / tradingYrs) - 1.0) * 100.0 : 0.0
 
 var float bsc_maxDD_ever = 0.0
 bsc_maxDD_ever := math.min(bsc_maxDD_ever, dd_bsc)
@@ -179,52 +185,47 @@ var float active_maxDD_ever = 0.0
 active_maxDD_ever := math.min(active_maxDD_ever, dd_active)
 
 // =============================================================================
-// PLOTS — COMPARISON OVERLAY
+// PLOTS — COMPARISON OVERLAY (separate pane)
 // =============================================================================
 
-// Plot simulated overlay equity on a secondary scale
 plot(i_showCompare ? overlayEquity : na, 
      title="Overlay Strategy Equity", 
      color=color.new(color.orange, 30), 
-     linewidth=2, 
-     display=display.pane)
+     linewidth=2)
 
-// Plot active strategy equity for reference
 plot(i_showCompare ? strategy.equity : na, 
      title="Active Strategy Equity", 
      color=color.new(color.blue, 20), 
-     linewidth=2, 
-     display=display.pane)
+     linewidth=2)
 
 // =============================================================================
-// PLOTS — DRAWDOWN PANEL
+// PLOTS — DRAWDOWN (plotted on price pane; use separate indicator if needed)
 // =============================================================================
 
+// Drawdown values are negative percentages — plot them for reference.
+// They will appear near zero on the price chart. For a dedicated pane,
+// copy the drawdown section into a separate indicator.
 plot(i_showDrawdown ? dd_active : na, 
      title="Active Drawdown %", 
      color=color.new(color.red, 40), 
-     style=plot.style_area, 
-     display=display.pane)
+     style=plot.style_area)
 
 plot(i_showDrawdown ? dd_overlay : na, 
      title="Overlay Drawdown %", 
      color=color.new(color.orange, 60), 
-     style=plot.style_area, 
-     display=display.pane)
-
-hline(0, "Zero", color=color.gray, linestyle=hline.style_dotted, display=display.pane)
+     style=plot.style_area)
 
 // =============================================================================
 // CHART MARKERS
 // =============================================================================
 
-// Mark entry points
-plotshape(i_strategy == "Buy-and-Hold" and bh_entered and bh_entered[1] == false, 
+// Mark Buy-and-Hold entry point
+plotshape(i_strategy == "Buy-and-Hold" and bh_entered and not bh_entered[1], 
      title="BH Entry", style=shape.triangleup, 
      location=location.belowbar, color=color.green, size=size.normal, 
      text="BUY & HOLD")
 
-// For Buy-Sell-Close, mark first and last bars only (too many daily markers)
+// Mark Buy-Sell-Close start (first bar only)
 plotshape(i_strategy == "Buy-Sell-Close" and bar_index == 0 and inDateRange, 
      title="BSC Start", style=shape.triangleup, 
      location=location.belowbar, color=color.teal, size=size.small, 
@@ -242,73 +243,81 @@ if i_showDashboard and barstate.islast
          frame_width=2, 
          frame_color=color.white)
 
+    // Colors
+    color cHdr  = color.new(#1a1a2e, 0)
+    color cGray = color.gray
+    color cWht  = color.white
+    color cYel  = color.yellow
+    color cAqua = color.aqua
+
     // --- Header Row ---
-    table.cell(dash, 0, 0, "Metric",            text_color=color.white, text_size=size.small, bgcolor=color.new(#1a1a2e, 0), text_halign=text.align_left)
-    table.cell(dash, 1, 0, "Buy-and-Hold",       text_color=color.new(color.blue, 0), text_size=size.small, bgcolor=color.new(#1a1a2e, 0), text_halign=text.align_center)
-    table.cell(dash, 2, 0, "Buy-Sell-Close",     text_color=color.new(color.orange, 0), text_size=size.small, bgcolor=color.new(#1a1a2e, 0), text_halign=text.align_center)
-    table.cell(dash, 3, 0, "Active",             text_color=color.new(color.green, 0), text_size=size.small, bgcolor=color.new(#1a1a2e, 0), text_halign=text.align_center)
-    table.cell(dash, 4, 0, "Winner",             text_color=color.yellow, text_size=size.small, bgcolor=color.new(#1a1a2e, 0), text_halign=text.align_center)
+    table.cell(dash, 0, 0, "Metric",            text_color=cWht,                    text_size=size.small, bgcolor=cHdr, text_halign=text.align_left)
+    table.cell(dash, 1, 0, "Buy-and-Hold",       text_color=color.new(color.blue, 0),   text_size=size.small, bgcolor=cHdr, text_halign=text.align_center)
+    table.cell(dash, 2, 0, "Buy-Sell-Close",     text_color=color.new(color.orange, 0), text_size=size.small, bgcolor=cHdr, text_halign=text.align_center)
+    table.cell(dash, 3, 0, "Active",             text_color=color.new(color.green, 0),  text_size=size.small, bgcolor=cHdr, text_halign=text.align_center)
+    table.cell(dash, 4, 0, "Winner",             text_color=cYel,                    text_size=size.small, bgcolor=cHdr, text_halign=text.align_center)
 
     // --- Row 1: Initial Capital ---
-    table.cell(dash, 0, 1, "Initial Capital",    text_color=color.gray, text_size=size.small, text_halign=text.align_left)
-    table.cell(dash, 1, 1, "$" + str.tostring(i_capital, "#,##0"), text_color=color.white, text_size=size.small, text_halign=text.align_center)
-    table.cell(dash, 2, 1, "$" + str.tostring(i_capital, "#,##0"), text_color=color.white, text_size=size.small, text_halign=text.align_center)
-    table.cell(dash, 3, 1, "$" + str.tostring(i_capital, "#,##0"), text_color=color.white, text_size=size.small, text_halign=text.align_center)
-    table.cell(dash, 4, 1, "—",                  text_color=color.gray, text_size=size.small, text_halign=text.align_center)
+    string capStr = "$" + str.tostring(i_capital, "#,##0")
+    table.cell(dash, 0, 1, "Initial Capital",    text_color=cGray, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 1, capStr,               text_color=cWht,  text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 2, 1, capStr,               text_color=cWht,  text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 3, 1, capStr,               text_color=cWht,  text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 4, 1, "—",                  text_color=cGray, text_size=size.small, text_halign=text.align_center)
 
     // --- Row 2: Final Equity ---
-    table.cell(dash, 0, 2, "Final Equity",       text_color=color.gray, text_size=size.small, text_halign=text.align_left)
-    table.cell(dash, 1, 2, "$" + str.tostring(sim_bh_equity, "#,##0"), text_color=sim_bh_equity >= i_capital ? color.lime : color.red, text_size=size.small, text_halign=text.align_center)
-    table.cell(dash, 2, 2, "$" + str.tostring(sim_bsc_equity, "#,##0"), text_color=sim_bsc_equity >= i_capital ? color.lime : color.red, text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 0, 2, "Final Equity",       text_color=cGray, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 2, "$" + str.tostring(safe_bh_equity, "#,##0"),  text_color=safe_bh_equity >= i_capital ? color.lime : color.red,  text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 2, 2, "$" + str.tostring(safe_bsc_equity, "#,##0"), text_color=safe_bsc_equity >= i_capital ? color.lime : color.red, text_size=size.small, text_halign=text.align_center)
     table.cell(dash, 3, 2, "$" + str.tostring(strategy.equity, "#,##0"), text_color=strategy.equity >= i_capital ? color.lime : color.red, text_size=size.small, text_halign=text.align_center)
-    string eq_winner = sim_bh_equity >= sim_bsc_equity ? "Buy-Hold" : "Buy-Sell"
-    table.cell(dash, 4, 2, eq_winner, text_color=color.yellow, text_size=size.small, text_halign=text.align_center)
+    string eq_winner = safe_bh_equity >= safe_bsc_equity ? "Buy-Hold" : "Buy-Sell"
+    table.cell(dash, 4, 2, eq_winner, text_color=cYel, text_size=size.small, text_halign=text.align_center)
 
     // --- Row 3: Total Return % ---
-    table.cell(dash, 0, 3, "Total Return %",     text_color=color.gray, text_size=size.small, text_halign=text.align_left)
-    table.cell(dash, 1, 3, str.tostring(bh_totalRet, "#,##0.00") + "%", text_color=bh_totalRet >= 0 ? color.lime : color.red, text_size=size.small, text_halign=text.align_center)
-    table.cell(dash, 2, 3, str.tostring(bsc_totalRet, "#,##0.00") + "%", text_color=bsc_totalRet >= 0 ? color.lime : color.red, text_size=size.small, text_halign=text.align_center)
-    table.cell(dash, 3, 3, str.tostring(active_totalRet, "#,##0.00") + "%", text_color=active_totalRet >= 0 ? color.lime : color.red, text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 0, 3, "Total Return %",     text_color=cGray, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 3, str.tostring(bh_totalRet, "#,##0.00") + "%",      text_color=bh_totalRet >= 0 ? color.lime : color.red,      text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 2, 3, str.tostring(bsc_totalRet, "#,##0.00") + "%",     text_color=bsc_totalRet >= 0 ? color.lime : color.red,     text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 3, 3, str.tostring(active_totalRet, "#,##0.00") + "%",  text_color=active_totalRet >= 0 ? color.lime : color.red,  text_size=size.small, text_halign=text.align_center)
     string ret_winner = bh_totalRet >= bsc_totalRet ? "Buy-Hold" : "Buy-Sell"
-    table.cell(dash, 4, 3, ret_winner, text_color=color.yellow, text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 4, 3, ret_winner, text_color=cYel, text_size=size.small, text_halign=text.align_center)
 
     // --- Row 4: CAGR % ---
-    table.cell(dash, 0, 4, "CAGR %",             text_color=color.gray, text_size=size.small, text_halign=text.align_left)
-    table.cell(dash, 1, 4, str.tostring(bh_cagr, "0.00") + "%", text_color=bh_cagr >= 0 ? color.lime : color.red, text_size=size.small, text_halign=text.align_center)
-    table.cell(dash, 2, 4, str.tostring(bsc_cagr, "0.00") + "%", text_color=bsc_cagr >= 0 ? color.lime : color.red, text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 0, 4, "CAGR %",             text_color=cGray, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 4, str.tostring(bh_cagr, "0.00") + "%",     text_color=bh_cagr >= 0 ? color.lime : color.red,     text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 2, 4, str.tostring(bsc_cagr, "0.00") + "%",    text_color=bsc_cagr >= 0 ? color.lime : color.red,    text_size=size.small, text_halign=text.align_center)
     table.cell(dash, 3, 4, str.tostring(active_cagr, "0.00") + "%", text_color=active_cagr >= 0 ? color.lime : color.red, text_size=size.small, text_halign=text.align_center)
     string cagr_winner = bh_cagr >= bsc_cagr ? "Buy-Hold" : "Buy-Sell"
-    table.cell(dash, 4, 4, cagr_winner, text_color=color.yellow, text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 4, 4, cagr_winner, text_color=cYel, text_size=size.small, text_halign=text.align_center)
 
     // --- Row 5: Max Drawdown % ---
-    table.cell(dash, 0, 5, "Max Drawdown %",     text_color=color.gray, text_size=size.small, text_halign=text.align_left)
-    table.cell(dash, 1, 5, str.tostring(bh_maxDD_ever, "0.00") + "%", text_color=color.red, text_size=size.small, text_halign=text.align_center)
-    table.cell(dash, 2, 5, str.tostring(bsc_maxDD_ever, "0.00") + "%", text_color=color.red, text_size=size.small, text_halign=text.align_center)
-    table.cell(dash, 3, 5, str.tostring(active_maxDD_ever, "0.00") + "%", text_color=color.red, text_size=size.small, text_halign=text.align_center)
-    // Lower (less negative) drawdown is better
+    table.cell(dash, 0, 5, "Max Drawdown %",     text_color=cGray, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 5, str.tostring(bh_maxDD_ever, "0.00") + "%",      text_color=color.red, text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 2, 5, str.tostring(bsc_maxDD_ever, "0.00") + "%",     text_color=color.red, text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 3, 5, str.tostring(active_maxDD_ever, "0.00") + "%",  text_color=color.red, text_size=size.small, text_halign=text.align_center)
+    // Less negative = better drawdown
     string dd_winner = bh_maxDD_ever >= bsc_maxDD_ever ? "Buy-Hold" : "Buy-Sell"
-    table.cell(dash, 4, 5, dd_winner, text_color=color.yellow, text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 4, 5, dd_winner, text_color=cYel, text_size=size.small, text_halign=text.align_center)
 
     // --- Row 6: Current Drawdown % ---
-    table.cell(dash, 0, 6, "Current DD %",       text_color=color.gray, text_size=size.small, text_halign=text.align_left)
-    table.cell(dash, 1, 6, str.tostring(dd_bh, "0.00") + "%", text_color=dd_bh < -5 ? color.red : color.orange, text_size=size.small, text_halign=text.align_center)
-    table.cell(dash, 2, 6, str.tostring(dd_bsc, "0.00") + "%", text_color=dd_bsc < -5 ? color.red : color.orange, text_size=size.small, text_halign=text.align_center)
-    table.cell(dash, 3, 6, str.tostring(dd_active, "0.00") + "%", text_color=dd_active < -5 ? color.red : color.orange, text_size=size.small, text_halign=text.align_center)
-    table.cell(dash, 4, 6, "—",                  text_color=color.gray, text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 0, 6, "Current DD %",       text_color=cGray, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 6, str.tostring(dd_bh, "0.00") + "%",      text_color=dd_bh < -5 ? color.red : color.orange,      text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 2, 6, str.tostring(dd_bsc, "0.00") + "%",     text_color=dd_bsc < -5 ? color.red : color.orange,     text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 3, 6, str.tostring(dd_active, "0.00") + "%",  text_color=dd_active < -5 ? color.red : color.orange,  text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 4, 6, "—",                  text_color=cGray, text_size=size.small, text_halign=text.align_center)
 
-    // --- Row 7: Bars / Years ---
-    table.cell(dash, 0, 7, "Period",              text_color=color.gray, text_size=size.small, text_halign=text.align_left)
-    table.cell(dash, 1, 7, str.tostring(totalBars) + " bars", text_color=color.white, text_size=size.small, text_halign=text.align_center)
-    table.cell(dash, 2, 7, str.tostring(tradingYrs, "0.1") + " yrs", text_color=color.white, text_size=size.small, text_halign=text.align_center)
+    // --- Row 7: Period ---
+    table.cell(dash, 0, 7, "Period",              text_color=cGray,  text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 7, str.tostring(totalBars) + " bars",       text_color=cWht,   text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 2, 7, str.tostring(tradingYrs, "0.1") + " yrs", text_color=cWht,  text_size=size.small, text_halign=text.align_center)
     table.cell(dash, 3, 7, i_strategy,            text_color=color.green, text_size=size.small, text_halign=text.align_center)
-    table.cell(dash, 4, 7, "—",                  text_color=color.gray, text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 4, 7, "—",                  text_color=cGray, text_size=size.small, text_halign=text.align_center)
 
     // --- Row 8: Symbol ---
-    table.cell(dash, 0, 8, "Symbol",              text_color=color.gray, text_size=size.small, text_halign=text.align_left)
-    table.cell(dash, 1, 8, syminfo.tickerid,      text_color=color.aqua, text_size=size.small, text_halign=text.align_center)
-    table.cell(dash, 2, 8, syminfo.type,           text_color=color.aqua, text_size=size.small, text_halign=text.align_center)
-    table.cell(dash, 3, 8, timeframe.period,       text_color=color.aqua, text_size=size.small, text_halign=text.align_center)
-    table.cell(dash, 4, 8, "—",                  text_color=color.gray, text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 0, 8, "Symbol",              text_color=cGray, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 8, syminfo.tickerid,      text_color=cAqua, text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 2, 8, syminfo.type,           text_color=cAqua, text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 3, 8, timeframe.period,       text_color=cAqua, text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 4, 8, "—",                  text_color=cGray, text_size=size.small, text_halign=text.align_center)
 
 // =============================================================================
 // END
