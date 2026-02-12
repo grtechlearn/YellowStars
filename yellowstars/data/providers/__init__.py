@@ -4,3 +4,4 @@ from yellowstars.data.providers.polygon_provider import PolygonDataProvider
 from yellowstars.data.providers.polygon_flatfile_provider import PolygonFreeProvider
 from yellowstars.data.providers.yahoo_provider import YahooDataProvider
 from yellowstars.data.providers.crypto_provider import CryptoDataProvider
+from yellowstars.data.providers.malik_textfile_provider import MalikTextFileProvider

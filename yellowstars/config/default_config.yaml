@@ -13,7 +13,7 @@ reports_directory: "reports"
 
 # --- Data Provider ---
 data_provider:
-  name: "polygon"           # polygon | yahoo | alpha_vantage | ccxt
+  name: "yahoo"             # polygon | yahoo | alpha_vantage | ccxt
   api_key: ""               # Set via YS_DATA_PROVIDER__API_KEY
   base_url: ""
   rate_limit_per_minute: 5

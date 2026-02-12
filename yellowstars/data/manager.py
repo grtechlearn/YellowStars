@@ -28,6 +28,7 @@ from yellowstars.data.providers.polygon_provider import PolygonDataProvider
 from yellowstars.data.providers.polygon_flatfile_provider import PolygonFreeProvider
 from yellowstars.data.providers.yahoo_provider import YahooDataProvider
 from yellowstars.data.providers.crypto_provider import CryptoDataProvider
+from yellowstars.data.providers.malik_textfile_provider import MalikTextFileProvider
 
 
 class DataManager:
@@ -53,6 +54,7 @@ class DataManager:
         "yahoo": YahooDataProvider,
         "crypto": CryptoDataProvider,
         "ccxt": CryptoDataProvider,
+        "malik_textfile": MalikTextFileProvider,
     }
 
     def __init__(self, config: DataProviderConfig, cache_enabled: bool = True):
@@ -62,6 +64,19 @@ class DataManager:
         self._fallback_providers: list[BaseDataProvider] = []
         self._cache = LocalCache(config.cache_directory) if cache_enabled else None
         self._initialized = False
+        self._local_store = None
+        self._use_local_only = False
+
+    def enable_local_only_mode(self, local_data_dir: str = "LocalData") -> None:
+        """Enable LocalData-only mode. No network fetches during backtest.
+
+        In this mode, get_data() reads exclusively from LocalData/ parquet files.
+        Data must be pre-downloaded using `python preload_data.py`.
+        """
+        from yellowstars.data.local_data_store import LocalDataStore
+        self._local_store = LocalDataStore(local_data_dir)
+        self._use_local_only = True
+        logger.info(f"Local-only mode enabled. Reading from {local_data_dir}/")
 
     def initialize(self) -> None:
         """Initialize the primary data provider and fallbacks."""
@@ -73,10 +88,16 @@ class DataManager:
                 f"Supported: {list(self.PROVIDER_MAP.keys())}"
             )
 
+        # Build extra kwargs for file-based providers
+        extra_kwargs = {}
+        if self.config.name.lower() == "malik_textfile":
+            extra_kwargs["stockdata_dir"] = self.config.base_url
+
         self._primary_provider = provider_class(
             api_key=self.config.api_key,
             base_url=self.config.base_url,
             rate_limit_per_minute=self.config.rate_limit_per_minute,
+            **extra_kwargs,
         )
 
         try:
@@ -122,6 +143,10 @@ class DataManager:
 
         if end_date is None:
             end_date = date.today()
+
+        # 0. Local-only mode: read from LocalData/ only
+        if self._use_local_only and self._local_store:
+            return self._local_store.load(symbol, start_date, end_date)
 
         # 1. Try cache first (unless force refresh)
         if self._cache and self.cache_enabled and not force_refresh:

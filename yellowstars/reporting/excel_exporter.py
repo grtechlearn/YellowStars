@@ -59,6 +59,18 @@ class ExcelExporter:
         filename = f"backtest_{result.strategy_name}_{timestamp}.xlsx"
         filepath = self.output_dir / filename
 
+        # Strip timezone info from all datetime indices (Excel doesn't support tz-aware datetimes)
+        if result.equity_curve is not None and hasattr(result.equity_curve.index, 'tz') and result.equity_curve.index.tz is not None:
+            result.equity_curve.index = result.equity_curve.index.tz_localize(None)
+        if result.benchmark_curve is not None and hasattr(result.benchmark_curve.index, 'tz') and result.benchmark_curve.index.tz is not None:
+            result.benchmark_curve.index = result.benchmark_curve.index.tz_localize(None)
+        if result.daily_returns is not None and hasattr(result.daily_returns.index, 'tz') and result.daily_returns.index.tz is not None:
+            result.daily_returns.index = result.daily_returns.index.tz_localize(None)
+        if result.signals_df is not None and hasattr(result.signals_df.index, 'tz') and result.signals_df.index.tz is not None:
+            result.signals_df.index = result.signals_df.index.tz_localize(None)
+        if result.position_history is not None and hasattr(result.position_history.index, 'tz') and result.position_history.index.tz is not None:
+            result.position_history.index = result.position_history.index.tz_localize(None)
+
         # Calculate metrics
         pm = PerformanceMetrics(
             result.equity_curve, result.benchmark_curve, result.trades
@@ -99,6 +111,11 @@ class ExcelExporter:
         """Export raw market data to Excel in LocalData/."""
         filename = f"history_{symbol.upper()}.xlsx"
         filepath = self.output_dir / filename
+
+        # Strip timezone info (Excel doesn't support tz-aware datetimes)
+        if hasattr(data.index, 'tz') and data.index.tz is not None:
+            data = data.copy()
+            data.index = data.index.tz_localize(None)
 
         with pd.ExcelWriter(filepath, engine="xlsxwriter") as writer:
             data.to_excel(writer, sheet_name="OHLCV_Data", index=True)
@@ -232,7 +249,8 @@ class ExcelExporter:
         })
 
         if result.benchmark_curve is not None and not result.benchmark_curve.empty:
-            eq_df["Benchmark_Equity"] = result.benchmark_curve.values[:len(eq_df)]
+            # Align benchmark to equity curve index (benchmark may cover shorter period)
+            eq_df["Benchmark_Equity"] = result.benchmark_curve.reindex(eq_df.index)
 
         eq_df["Daily_Return_%"] = result.daily_returns.values[:len(eq_df)] * 100
 

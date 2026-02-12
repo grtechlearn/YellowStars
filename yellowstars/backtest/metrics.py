@@ -27,9 +27,11 @@ class PerformanceMetrics:
         trades: Optional[list] = None,
         risk_free_rate: float = 0.04,  # ~4% annual risk-free rate
         trading_days_per_year: int = 252,
+        sell_hold_curve: Optional[pd.Series] = None,
     ):
         self.equity = equity_curve
         self.benchmark = benchmark_curve
+        self.sell_hold = sell_hold_curve
         self.trades = trades or []
         self.risk_free_rate = risk_free_rate
         self.trading_days = trading_days_per_year
@@ -39,6 +41,11 @@ class PerformanceMetrics:
         self.benchmark_returns = (
             benchmark_curve.pct_change().fillna(0)
             if benchmark_curve is not None
+            else pd.Series(dtype=float)
+        )
+        self.sell_hold_returns = (
+            sell_hold_curve.pct_change().fillna(0)
+            if sell_hold_curve is not None and not sell_hold_curve.empty
             else pd.Series(dtype=float)
         )
 
@@ -306,7 +313,7 @@ class PerformanceMetrics:
             beta = 0.0
             alpha = 0.0
 
-        return {
+        result = {
             "strategy_total_return_pct": round(strat_total, 2),
             "benchmark_total_return_pct": round(bench_total_return, 2),
             "strategy_cagr_pct": round(strat_cagr, 2),
@@ -318,6 +325,35 @@ class PerformanceMetrics:
             "alpha_annualized": round(alpha, 3),
             "beta": round(beta, 3),
         }
+
+        # Sell & Hold metrics (SQQQ buy-and-hold)
+        if self.sell_hold is not None and not self.sell_hold.empty:
+            sh_initial = self.sell_hold.iloc[0]
+            sh_final = self.sell_hold.iloc[-1]
+            sh_total = (sh_final / sh_initial - 1) * 100
+            sh_years = len(self.sell_hold) / self.trading_days
+            sh_cagr = (
+                ((sh_final / sh_initial) ** (1 / sh_years) - 1) * 100
+                if sh_years > 0 and sh_initial > 0
+                else 0
+            )
+
+            sh_running_max = self.sell_hold.expanding().max()
+            sh_dd = ((self.sell_hold - sh_running_max) / sh_running_max * 100).min()
+
+            sh_vol = self.sell_hold_returns.std() * np.sqrt(self.trading_days)
+            sh_sharpe = (
+                (self.sell_hold_returns.mean() * self.trading_days - self.risk_free_rate)
+                / (sh_vol if sh_vol > 0 else 1)
+            )
+
+            result["sell_hold_total_return_pct"] = round(sh_total, 2)
+            result["sell_hold_cagr_pct"] = round(sh_cagr, 2)
+            result["sell_hold_max_drawdown_pct"] = round(sh_dd, 2)
+            result["sell_hold_sharpe"] = round(sh_sharpe, 3)
+            result["sell_hold_final_equity"] = round(sh_final, 2)
+
+        return result
 
     def summary_text(self) -> str:
         """Generate a human-readable performance summary."""

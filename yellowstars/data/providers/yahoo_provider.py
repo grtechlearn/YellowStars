@@ -40,6 +40,18 @@ class YahooDataProvider(BaseDataProvider):
         TimeFrame.MONTHLY: "1mo",
     }
 
+    # Common index symbols: Polygon/standard → Yahoo Finance format
+    YAHOO_SYMBOL_MAP = {
+        "NDX": "^NDX",       # NASDAQ-100
+        "GSPC": "^GSPC",     # S&P 500
+        "SPX": "^GSPC",      # S&P 500 (alt)
+        "DJI": "^DJI",       # Dow Jones
+        "IXIC": "^IXIC",     # NASDAQ Composite
+        "RUT": "^RUT",       # Russell 2000
+        "VIX": "^VIX",       # CBOE Volatility Index
+        "TNX": "^TNX",       # 10-Year Treasury Yield
+    }
+
     # Yahoo Finance symbol mapping for international markets
     MARKET_SUFFIX = {
         "india": ".NS",       # NSE
@@ -82,15 +94,17 @@ class YahooDataProvider(BaseDataProvider):
         if not self._connected:
             self.connect()
 
+        # Auto-translate common index symbols (e.g., NDX → ^NDX)
+        yahoo_symbol = self.YAHOO_SYMBOL_MAP.get(symbol.upper(), symbol)
         interval = self.TIMEFRAME_MAP.get(timeframe, "1d")
 
         logger.info(
-            f"Fetching {symbol} from Yahoo Finance: "
+            f"Fetching {symbol} (as {yahoo_symbol}) from Yahoo Finance: "
             f"{start_date} to {end_date} ({timeframe.value})"
         )
 
         try:
-            ticker = yf.Ticker(symbol)
+            ticker = yf.Ticker(yahoo_symbol)
             df = ticker.history(
                 start=start_date.isoformat(),
                 end=(end_date + pd.Timedelta(days=1)).isoformat(),
@@ -122,7 +136,8 @@ class YahooDataProvider(BaseDataProvider):
         import yfinance as yf
 
         try:
-            ticker = yf.Ticker(symbol)
+            yahoo_symbol = self.YAHOO_SYMBOL_MAP.get(symbol.upper(), symbol)
+            ticker = yf.Ticker(yahoo_symbol)
             info = ticker.fast_info
             return getattr(info, "last_price", None) or getattr(info, "previous_close", None)
         except Exception as e:

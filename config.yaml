@@ -13,9 +13,9 @@ reports_directory: "reports"
 
 # --- Data Provider ---
 data_provider:
-  name: "polygon" # polygon | yahoo | alpha_vantage | ccxt
-  api_key: "t97Bwvp97pwQD0CNvxxzKbPfmfHnNewy" # Set via YS_DATA_PROVIDER__API_KEY
-  base_url: "https://files.massive.com"
+  name: "yahoo" # polygon | yahoo | alpha_vantage | ccxt
+  api_key: "" # Not required for Yahoo Finance
+  base_url: ""
   rate_limit_per_minute: 5
   cache_enabled: true
   cache_directory: "data/cache"

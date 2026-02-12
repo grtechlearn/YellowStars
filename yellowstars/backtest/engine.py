@@ -47,6 +47,10 @@ class BacktestResult:
     equity_curve: pd.Series = field(default_factory=lambda: pd.Series(dtype=float))
     benchmark_curve: pd.Series = field(default_factory=lambda: pd.Series(dtype=float))
 
+    # Sell & Hold benchmark (SQQQ buy-and-hold)
+    sell_hold_curve: pd.Series = field(default_factory=lambda: pd.Series(dtype=float))
+    sell_hold_returns: pd.Series = field(default_factory=lambda: pd.Series(dtype=float))
+
     # Signals
     signals_df: pd.DataFrame = field(default_factory=pd.DataFrame)
 
@@ -93,6 +97,7 @@ class BacktestEngine:
         strategy: BaseStrategy,
         data: pd.DataFrame,
         benchmark_data: Optional[pd.DataFrame] = None,
+        sell_hold_data: Optional[pd.DataFrame] = None,
     ) -> BacktestResult:
         """Run a complete backtest.
 
@@ -100,6 +105,7 @@ class BacktestEngine:
             strategy: The strategy to test.
             data: OHLCV data for the primary instrument (or the underlying index).
             benchmark_data: Optional OHLCV data for Buy & Hold benchmark.
+            sell_hold_data: Optional OHLCV data for Sell & Hold benchmark (e.g., SQQQ).
 
         Returns:
             BacktestResult with equity curves, trades, and metrics.
@@ -175,6 +181,15 @@ class BacktestEngine:
             bench_returns = data["close"].pct_change().fillna(0)
             benchmark_curve = (1 + bench_returns).cumprod() * self.settings.initial_capital
 
+        # Build sell-and-hold curve (SQQQ Buy & Hold = "Sell & Hold")
+        if sell_hold_data is not None and not sell_hold_data.empty:
+            sh_returns = sell_hold_data["close"].pct_change().fillna(0)
+            sell_hold_curve = (1 + sh_returns).cumprod() * self.settings.initial_capital
+            sell_hold_returns_series = sell_hold_curve.pct_change().fillna(0)
+        else:
+            sell_hold_curve = pd.Series(dtype=float)
+            sell_hold_returns_series = pd.Series(dtype=float)
+
         # Build result
         result = BacktestResult(
             strategy_name=strategy.name,
@@ -187,6 +202,8 @@ class BacktestEngine:
             trades=self._trades,
             daily_returns=equity_curve.pct_change().fillna(0),
             benchmark_returns=benchmark_curve.pct_change().fillna(0),
+            sell_hold_curve=sell_hold_curve,
+            sell_hold_returns=sell_hold_returns_series,
             position_history=pd.DataFrame(self._position_history),
             strategy_params=strategy.get_params(),
             backtest_settings={
