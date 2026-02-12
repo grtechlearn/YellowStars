@@ -121,7 +121,7 @@ if inDateRange and not na(open) and not na(close) and open > 0
 
 // Pick the one we're NOT running as the overlay
 float overlayEquity = i_strategy == "Buy-and-Hold" ? sim_bsc_equity : sim_bh_equity
-string overlayName  = i_strategy == "Buy-and-Hold" ? "Buy-Sell-Close (Sim)" : "Buy-and-Hold (Sim)"
+// overlayName removed — Pine Script plot() title requires const string
 
 // =============================================================================
 // DRAWDOWN CALCULATION
@@ -184,7 +184,7 @@ active_maxDD_ever := math.min(active_maxDD_ever, dd_active)
 
 // Plot simulated overlay equity on a secondary scale
 plot(i_showCompare ? overlayEquity : na, 
-     title=overlayName, 
+     title="Overlay Strategy Equity", 
      color=color.new(color.orange, 30), 
      linewidth=2, 
      display=display.pane)
