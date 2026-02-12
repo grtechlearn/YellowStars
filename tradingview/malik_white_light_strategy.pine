@@ -1,27 +1,25 @@
 // =============================================================================
-// Malik's White Light Strategy — Pine Script v6
+// Malik's White Light Strategy v2 — Pine Script v6
 // =============================================================================
 // Source: YellowStars Systematic Trading Platform
 // Collective2: https://collective2.com/my/K6Q9FDJ8A
 // Live since: July 23, 2022
 //
-// Architecture: 7 independent sub-systems vote on position direction & size
-//   - Sub1: Momentum Long (TQQQ)        — Weight 25%
-//   - Sub2: Mean Reversion Short (SQQQ)  — Weight 10%
-//   - Sub3: Mean Reversion Long #1       — Weight 15%
-//   - Sub4: Mean Reversion Long #2       — Weight 10%
-//   - Sub5: Mean Reversion Long #3       — Weight 10%
-//   - Sub6: Momentum Short #1 (SQQQ)    — Weight 20%
-//   - Sub7: Momentum Short #2 (SQQQ)    — Weight 10%
+// KEY FIX (v2): Simulates 3x leveraged ETF returns (TQQQ/SQQQ) on NDX chart.
+// Previous version traded NDX at 1x = massive underperformance vs Buy&Hold.
+// Malik trades TQQQ (3x Nasdaq bull) and SQQQ (3x Nasdaq inverse) —
+// this version synthesizes 3x daily returns with decay to match real behavior.
 //
-// IMPORTANT: Apply this strategy to the NDX (Nasdaq 100 Index) daily chart.
-// The strategy evaluates NDX and trades TQQQ (3x long) or SQQQ (3x inverse).
-// TradingView simulates this as long/short positions on NDX as a proxy.
+// Architecture: 7 independent sub-systems vote on direction.
+// Conviction-based signal: requires strong agreement to change direction.
+// Long bias: TQQQ positions get 100% equity, SQQQ gets ~50% equity.
+//
+// IMPORTANT: Apply to NDX (Nasdaq 100 Index) DAILY chart.
 // =============================================================================
 
 //@version=6
 strategy(
-     "Malik White Light Strategy",
+     "Malik White Light Strategy v2",
      overlay        = true,
      initial_capital = 15000,
      default_qty_type = strategy.percent_of_equity,
@@ -45,18 +43,21 @@ string GRP_BB  = "Bollinger Bands"
 int    bbPeriod = input.int(20,  "BB Period",        minval=5,  maxval=100, group=GRP_BB)
 float  bbStd    = input.float(2.0, "BB Std Deviation", minval=0.5, maxval=4.0, step=0.1, group=GRP_BB)
 
-string GRP_THR = "Extension Thresholds (%)"
-float  overextendedPct = input.float(12.0, "Overextended Above MA250 (%)", minval=5.0,  maxval=30.0, step=0.5, group=GRP_THR, tooltip="When price is this % above MA(250), mean reversion short triggers")
-float  severeDipPct    = input.float(-6.0, "Severe Dip Below MA20 (%)",    minval=-20.0, maxval=-1.0, step=0.5, group=GRP_THR, tooltip="When price dips this much below MA(20) in uptrend, aggressive buy triggers")
+string GRP_LEV = "3x Leverage Simulation"
+float  leverageMultiplier = input.float(3.0, "Leverage Multiplier", minval=1.0, maxval=5.0, step=0.5, group=GRP_LEV, tooltip="TQQQ/SQQQ are 3x daily leveraged ETFs. This simulates the 3x daily return amplification.")
+float  longAllocationPct  = input.float(1.0, "TQQQ Allocation (% of equity)", minval=0.1, maxval=1.0, step=0.05, group=GRP_LEV, tooltip="Malik allocates ~100% equity to TQQQ during bull signals")
+float  shortAllocationPct = input.float(0.45, "SQQQ Allocation (% of equity)", minval=0.1, maxval=1.0, step=0.05, group=GRP_LEV, tooltip="Malik allocates ~45% equity to SQQQ (smaller bear positions)")
 
-string GRP_WGT = "Sub-System Weights"
-float  wSub1 = input.float(0.25, "Sub1: Momentum Long",       minval=0, maxval=1, step=0.05, group=GRP_WGT)
-float  wSub2 = input.float(0.10, "Sub2: Mean Rev Short",      minval=0, maxval=1, step=0.05, group=GRP_WGT)
-float  wSub3 = input.float(0.15, "Sub3: Mean Rev Long #1",    minval=0, maxval=1, step=0.05, group=GRP_WGT)
-float  wSub4 = input.float(0.10, "Sub4: Mean Rev Long #2",    minval=0, maxval=1, step=0.05, group=GRP_WGT)
-float  wSub5 = input.float(0.10, "Sub5: Mean Rev Long #3",    minval=0, maxval=1, step=0.05, group=GRP_WGT)
-float  wSub6 = input.float(0.20, "Sub6: Momentum Short #1",   minval=0, maxval=1, step=0.05, group=GRP_WGT)
-float  wSub7 = input.float(0.10, "Sub7: Momentum Short #2",   minval=0, maxval=1, step=0.05, group=GRP_WGT)
+string GRP_SIG = "Signal Tuning"
+float  flipThreshold = input.float(0.12, "Flip Conviction Threshold", minval=0.01, maxval=0.5, step=0.01, group=GRP_SIG, tooltip="Minimum score difference to trigger a direction flip. Higher = fewer trades, longer holds.")
+int    minHoldBars   = input.int(3, "Minimum Hold Period (bars)", minval=1, maxval=20, group=GRP_SIG, tooltip="Minimum bars before allowing position change. Prevents whipsaw.")
+int    rsiPeriod     = input.int(14, "RSI Period", minval=5, maxval=30, group=GRP_SIG)
+float  rsiOverbought = input.float(75.0, "RSI Overbought Level", minval=60, maxval=90, step=1.0, group=GRP_SIG)
+float  rsiOversold   = input.float(30.0, "RSI Oversold Level",   minval=10, maxval=40, step=1.0, group=GRP_SIG)
+
+string GRP_THR = "Extension Thresholds (%)"
+float  overextendedPct = input.float(15.0, "Overextended Above MA250 (%)", minval=5.0,  maxval=30.0, step=0.5, group=GRP_THR)
+float  severeDipPct    = input.float(-8.0, "Severe Dip Below MA20 (%)",    minval=-20.0, maxval=-1.0, step=0.5, group=GRP_THR)
 
 string GRP_VIS = "Display"
 bool   showMAs     = input.bool(true,  "Show Moving Averages",   group=GRP_VIS)
@@ -78,15 +79,20 @@ float bbDev    = ta.stdev(close, bbPeriod) * bbStd
 float bbUpper  = bbMiddle + bbDev
 float bbLower  = bbMiddle - bbDev
 
-// Bollinger %B: where price sits relative to the bands (0 = lower, 1 = upper)
+// Bollinger %B and Bandwidth
 float bbPctB     = (bbUpper - bbLower) != 0 ? (close - bbLower) / (bbUpper - bbLower) : 0.5
-
-// Bollinger Bandwidth: (upper - lower) / middle * 100
 float bbBandwidth = bbMiddle != 0 ? (bbUpper - bbLower) / bbMiddle * 100 : 0.0
 
 // Price distance from MAs (percentage)
 float distFromMA20  = ma20  != 0 ? (close - ma20)  / ma20  * 100 : 0.0
 float distFromMA250 = ma250 != 0 ? (close - ma250) / ma250 * 100 : 0.0
+
+// RSI (Malik's real system uses RSI factors as multiplicative risk gates)
+float rsiValue = ta.rsi(close, rsiPeriod)
+
+// Percent from 252-day high (Malik's PercentHigh factor)
+float high252  = ta.highest(close, 252)
+float pctFromHigh = high252 != 0 ? (close - high252) / high252 * 100 : 0.0
 
 // Trend flags
 bool aboveMA20  = close > ma20
@@ -94,265 +100,303 @@ bool aboveMA250 = close > ma250
 bool uptrend    = aboveMA20  and aboveMA250
 bool downtrend  = not aboveMA20 and not aboveMA250
 
+// Stage classification (Malik's StageFactor)
+// Stage 1: Recovery (below MA250, above MA20) - Accumulation
+// Stage 2: Uptrend (above both) - Markup
+// Stage 3: Distribution (above MA250, below MA20) - Warning
+// Stage 4: Downtrend (below both) - Decline
+int stage = uptrend ? 2 : downtrend ? 4 : (aboveMA250 and not aboveMA20) ? 3 : 1
+
 // =============================================================================
-// 7 SUB-SYSTEMS — Each outputs a score from 0.0 to 1.0
+// 7 SUB-SYSTEMS — Enhanced with RSI gating and stage awareness
 // =============================================================================
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SUB-SYSTEM 1: MOMENTUM LONG (TQQQ direction)
-// Condition: Price > MA(20) AND Price > MA(250) AND strong Bollinger momentum
-// Purpose:   Heavy long allocation during confirmed uptrend momentum phases
-// ─────────────────────────────────────────────────────────────────────────────
+// Sub-system weights
+float wSub1 = 0.25    // Momentum Long
+float wSub2 = 0.10    // Mean Reversion Short
+float wSub3 = 0.15    // Mean Reversion Long #1
+float wSub4 = 0.10    // Mean Reversion Long #2
+float wSub5 = 0.10    // Mean Reversion Long #3
+float wSub6 = 0.20    // Momentum Short #1
+float wSub7 = 0.10    // Momentum Short #2
+
+// ─── SUB-SYSTEM 1: MOMENTUM LONG (TQQQ) ──────────────────────────────
+// Strong uptrend confirmed + momentum. RSI gate: not overbought.
 float sub1 = 0.0
-if aboveMA20 and aboveMA250
+if uptrend
+    // Base score from Bollinger momentum
     if bbPctB > 0.8
-        sub1 := 1.0      // Full momentum — price near upper Bollinger Band
+        sub1 := 1.0
     else if bbPctB > 0.5
-        sub1 := 0.6      // Moderate momentum — above midline
+        sub1 := 0.7
     else
-        sub1 := 0.3      // In uptrend but not in momentum phase yet
+        sub1 := 0.4
+    // RSI risk gate: reduce conviction when extremely overbought
+    if rsiValue > rsiOverbought
+        sub1 := sub1 * 0.5
+    // PercentHigh gate: stronger when near highs (momentum confirmation)
+    if pctFromHigh > -2.0
+        sub1 := math.min(1.0, sub1 * 1.2)
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SUB-SYSTEM 2: MEAN REVERSION SHORT (SQQQ direction)
-// Condition: Price extended > overextendedPct% above MA(250)
-// Purpose:   When rally is overextended, hedge/short via SQQQ
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── SUB-SYSTEM 2: MEAN REVERSION SHORT (SQQQ) ──────────────────────
+// Overextended above MA250 → reversion likely
 float sub2 = 0.0
 if distFromMA250 > overextendedPct
     float overextension = (distFromMA250 - overextendedPct) / 10.0
     sub2 := math.min(1.0, overextension)
+    // RSI confirmation: overbought strengthens the short signal
+    if rsiValue > rsiOverbought
+        sub2 := math.min(1.0, sub2 * 1.5)
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SUB-SYSTEM 3: MEAN REVERSION LONG #1 (TQQQ direction)
-// Condition: Price > MA(250) [uptrend intact] but dipped below MA(20)
-// Purpose:   Buy the dip — pullback to short-term MA in long-term uptrend
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── SUB-SYSTEM 3: MEAN REVERSION LONG #1 (TQQQ) ────────────────────
+// Dip below MA20 but MA250 intact → buy the dip
 float sub3 = 0.0
 if aboveMA250 and not aboveMA20
     float dipDepth = math.abs(distFromMA20)
-    if dipDepth > 1.0
-        sub3 := math.min(1.0, dipDepth / 5.0)
+    if dipDepth > 2.0
+        sub3 := math.min(1.0, dipDepth / 6.0)
+    // RSI oversold strengthens the buy signal
+    if rsiValue < rsiOversold
+        sub3 := math.min(1.0, sub3 * 1.5)
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SUB-SYSTEM 4: MEAN REVERSION LONG #2 (TQQQ direction)
-// Condition: Price > MA(250) AND touching lower Bollinger Band
-// Purpose:   Oversold bounce — price at lower BB in uptrend = buying opportunity
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── SUB-SYSTEM 4: MEAN REVERSION LONG #2 (TQQQ) ────────────────────
+// Lower Bollinger Band in uptrend → oversold bounce
 float sub4 = 0.0
 if aboveMA250
-    if bbPctB < 0.05
-        sub4 := 1.0      // Below lower band — strongest mean reversion buy
+    if bbPctB < 0.0
+        sub4 := 1.0
+    else if bbPctB < 0.1
+        sub4 := 0.8
     else if bbPctB < 0.2
-        sub4 := 0.8      // Near lower band in uptrend
+        sub4 := 0.5
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SUB-SYSTEM 5: MEAN REVERSION LONG #3 (TQQQ direction)
-// Condition: Price > MA(250) but severely extended below MA(20) (> severeDipPct)
-// Purpose:   Panic sell in uptrend = aggressive high-conviction buy
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── SUB-SYSTEM 5: MEAN REVERSION LONG #3 (TQQQ) ────────────────────
+// Severely extended below MA20 in uptrend → panic buy
 float sub5 = 0.0
 if aboveMA250 and distFromMA20 < severeDipPct
-    float severity = math.abs(distFromMA20 - severeDipPct) / 5.0
+    float severity = math.abs(distFromMA20 - severeDipPct) / 6.0
     sub5 := math.min(1.0, severity)
+    // RSI deep oversold → maximum conviction
+    if rsiValue < 25.0
+        sub5 := 1.0
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SUB-SYSTEM 6: MOMENTUM SHORT #1 (SQQQ direction)
-// Condition: Price < MA(20) AND Price < MA(250) — confirmed downtrend
-// Purpose:   Position in SQQQ during sustained downtrends
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── SUB-SYSTEM 6: MOMENTUM SHORT #1 (SQQQ) ─────────────────────────
+// Confirmed downtrend below both MAs
 float sub6 = 0.0
-if not aboveMA20 and not aboveMA250
-    sub6 := 0.7          // Confirmed downtrend base score
+if downtrend
+    sub6 := 0.6
     if distFromMA250 < -5.0
-        sub6 := 1.0      // Accelerating downtrend — max short conviction
+        sub6 := 0.8
+    if distFromMA250 < -10.0
+        sub6 := 1.0
+    // RSI gate: if oversold in downtrend, reduce short conviction (bounce risk)
+    if rsiValue < rsiOversold
+        sub6 := sub6 * 0.4
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SUB-SYSTEM 7: MOMENTUM SHORT #2 (SQQQ direction)
-// Condition: Below MA(250) AND below lower Bollinger Band (breakdown)
-// Purpose:   Bollinger squeeze breaking to the downside = volatility expansion short
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── SUB-SYSTEM 7: MOMENTUM SHORT #2 (SQQQ) ─────────────────────────
+// Bollinger breakdown below lower band in downtrend
 float sub7 = 0.0
 if not aboveMA250 and bbPctB < 0.0
-    sub7 := 0.8          // Below lower Bollinger in downtrend
-    if bbBandwidth < 5.0
-        sub7 := 1.0      // Squeeze breakout to downside — max conviction
+    sub7 := 0.7
+    if bbBandwidth < 5.0 and bbPctB < -0.1
+        sub7 := 1.0
+    // Same RSI gate as sub6
+    if rsiValue < rsiOversold
+        sub7 := sub7 * 0.4
 
 // =============================================================================
-// WEIGHTED AGGREGATION — Combine all 7 sub-systems
+// WEIGHTED AGGREGATION
 // =============================================================================
 
 // TQQQ (long) score: Sub1 + Sub3 + Sub4 + Sub5
-float tqqqScore = wSub1 * sub1 + wSub3 * sub3 + wSub4 * sub4 + wSub5 * sub5
+float tqqqRawScore = wSub1 * sub1 + wSub3 * sub3 + wSub4 * sub4 + wSub5 * sub5
 
 // SQQQ (short) score: Sub2 + Sub6 + Sub7
-float sqqqScore = wSub2 * sub2 + wSub6 * sub6 + wSub7 * sub7
+float sqqqRawScore = wSub2 * sub2 + wSub6 * sub6 + wSub7 * sub7
 
-// Sum of weights for normalization
-float tqqqWeightSum = wSub1 + wSub3 + wSub4 + wSub5
-float sqqqWeightSum = wSub2 + wSub6 + wSub7
+// Normalize to 0-1 range
+float tqqqWeightSum = wSub1 + wSub3 + wSub4 + wSub5  // = 0.60
+float sqqqWeightSum = wSub2 + wSub6 + wSub7            // = 0.40
 
-// =============================================================================
-// POSITION SIZING & DIRECTION
-// =============================================================================
-
-// Determine direction: higher score wins
-bool   goLong      = tqqqScore > sqqqScore
-bool   goShort     = sqqqScore > tqqqScore
-
-// Calculate raw position percentage (0.0 to 1.0)
-float  rawPositionPct = 0.0
-if goLong and tqqqWeightSum > 0
-    rawPositionPct := math.min(1.0, tqqqScore / tqqqWeightSum)
-else if goShort and sqqqWeightSum > 0
-    rawPositionPct := math.min(1.0, sqqqScore / sqqqWeightSum)
-
-// Round to nearest 5% to prevent noise trades (Malik's filter)
-float positionPct = math.round(rawPositionPct * 20) / 20
-
-// Convert to integer percentage for strategy order sizing
-int positionPctInt = int(positionPct * 100)
+float tqqqScore = tqqqWeightSum > 0 ? tqqqRawScore / tqqqWeightSum : 0.0
+float sqqqScore = sqqqWeightSum > 0 ? sqqqRawScore / sqqqWeightSum : 0.0
 
 // =============================================================================
-// SIGNAL DETECTION — Identify action changes
+// DIRECTION DECISION WITH CONVICTION THRESHOLD (HYSTERESIS)
 // =============================================================================
+// This prevents noisy flipping. Direction only changes when the competing
+// signal exceeds the current direction's score by flipThreshold.
+// Malik's real system holds positions for median 4-5 days, with occasional
+// multi-month holds. The threshold enforces persistence.
 
-// Track previous state
-var string prevDirection = "FLAT"
-var int    prevPosPct    = 0
+var int    currentDirection = 0    // 1 = TQQQ (long), -1 = SQQQ (short), 0 = flat
+var int    barsInPosition   = 0    // Counter for minimum hold period
 
-// Current direction as string
-string currDirection = goLong ? "TQQQ" : goShort ? "SQQQ" : "FLAT"
-
-// Detect signal type
-bool isFlip     = currDirection != prevDirection and prevDirection != "FLAT" and currDirection != "FLAT" and positionPctInt > 0
-bool isBuy      = positionPctInt > 0 and prevPosPct == 0
-bool isSell     = positionPctInt == 0 and prevPosPct > 0
-bool isIncrease = not isFlip and not isBuy and positionPctInt > prevPosPct and math.abs(positionPctInt - prevPosPct) >= 5
-bool isReduce   = not isFlip and not isSell and positionPctInt < prevPosPct and math.abs(positionPctInt - prevPosPct) >= 5
-bool isHold     = not isFlip and not isBuy and not isSell and not isIncrease and not isReduce
-
-// =============================================================================
-// STRATEGY EXECUTION — Entry/Exit Orders
-// =============================================================================
-
-// Only execute after enough bars for MA(250) to stabilize
 bool hasEnoughBars = bar_index >= slowPeriod + 20
 
+// Determine raw signal direction
+float scoreDiff = tqqqScore - sqqqScore  // Positive = TQQQ favored, Negative = SQQQ favored
+
+int rawDirection = 0
+if scoreDiff > 0.05
+    rawDirection := 1   // TQQQ
+else if scoreDiff < -0.05
+    rawDirection := -1  // SQQQ
+
+// Apply conviction threshold and minimum hold period
+int newDirection = currentDirection
 if hasEnoughBars
-    // === FLIP: Direction changed (TQQQ → SQQQ or SQQQ → TQQQ) ===
-    if isFlip
-        if goLong
-            // Close short, enter long
-            strategy.close_all(comment = "FLIP → TQQQ")
-            strategy.entry("TQQQ_Long", strategy.long, qty = strategy.equity * positionPct / close, comment = str.tostring(positionPctInt) + "% TQQQ")
-        else if goShort
-            // Close long, enter short
-            strategy.close_all(comment = "FLIP → SQQQ")
-            strategy.entry("SQQQ_Short", strategy.short, qty = strategy.equity * positionPct / close, comment = str.tostring(positionPctInt) + "% SQQQ")
+    if currentDirection == 0
+        // From flat: enter on any valid signal
+        if rawDirection != 0
+            newDirection := rawDirection
+    else if currentDirection == 1
+        // Currently TQQQ: only flip to SQQQ if SQQQ score exceeds by threshold AND min hold met
+        if sqqqScore - tqqqScore > flipThreshold and barsInPosition >= minHoldBars
+            newDirection := -1
+        // Go flat if both scores are very low (no conviction either way)
+        else if tqqqScore < 0.08 and sqqqScore < 0.08 and barsInPosition >= minHoldBars
+            newDirection := 0
+    else if currentDirection == -1
+        // Currently SQQQ: only flip to TQQQ if TQQQ score exceeds by threshold AND min hold met
+        if tqqqScore - sqqqScore > flipThreshold and barsInPosition >= minHoldBars
+            newDirection := 1
+        // Go flat if both scores are very low
+        else if tqqqScore < 0.08 and sqqqScore < 0.08 and barsInPosition >= minHoldBars
+            newDirection := 0
 
-    // === NEW BUY: From flat to positioned ===
-    else if isBuy
-        if goLong
-            strategy.entry("TQQQ_Long", strategy.long, qty = strategy.equity * positionPct / close, comment = "BUY " + str.tostring(positionPctInt) + "% TQQQ")
-        else if goShort
-            strategy.entry("SQQQ_Short", strategy.short, qty = strategy.equity * positionPct / close, comment = "BUY " + str.tostring(positionPctInt) + "% SQQQ")
+// Track bars in current position
+if newDirection != currentDirection
+    barsInPosition := 0
+else
+    barsInPosition += 1
 
-    // === SELL: Go flat ===
-    else if isSell
-        strategy.close_all(comment = "SELL → FLAT")
+// =============================================================================
+// 3x LEVERAGED ETF SIMULATION
+// =============================================================================
+// TQQQ ≈ 3x daily return of NDX (with volatility decay over time)
+// SQQQ ≈ -3x daily return of NDX
+//
+// We simulate leveraged equity by tracking a synthetic equity curve.
+// On each bar, the P&L is amplified by the leverage multiplier.
+// This means: Long 3x on a +1% NDX day = +3% portfolio return.
+//             Short 3x on a -1% NDX day = +3% portfolio return.
 
-    // === INCREASE / REDUCE: Resize position ===
-    else if isIncrease or isReduce
-        if goLong
-            strategy.entry("TQQQ_Long", strategy.long, qty = strategy.equity * positionPct / close, comment = (isIncrease ? "INC " : "RED ") + str.tostring(positionPctInt) + "% TQQQ")
-        else if goShort
-            strategy.entry("SQQQ_Short", strategy.short, qty = strategy.equity * positionPct / close, comment = (isIncrease ? "INC " : "RED ") + str.tostring(positionPctInt) + "% SQQQ")
+float ndxDailyReturn = close[1] != 0 ? (close - close[1]) / close[1] : 0.0
 
-// Update previous state for next bar
-prevDirection := currDirection
-prevPosPct    := positionPctInt
+// Simulated leveraged return based on current direction
+float leveragedReturn = 0.0
+if currentDirection == 1
+    // TQQQ position: +3x NDX daily return * allocation
+    leveragedReturn := ndxDailyReturn * leverageMultiplier * longAllocationPct
+else if currentDirection == -1
+    // SQQQ position: -3x NDX daily return * allocation (profit when NDX drops)
+    leveragedReturn := -ndxDailyReturn * leverageMultiplier * shortAllocationPct
+
+// Track synthetic leveraged equity
+var float syntheticEquity = 15000.0
+if hasEnoughBars and bar_index > slowPeriod + 21
+    syntheticEquity := syntheticEquity * (1.0 + leveragedReturn)
+
+// =============================================================================
+// STRATEGY EXECUTION
+// =============================================================================
+// We use strategy.entry with leverage-adjusted position sizing.
+// Long = simulating TQQQ (profit when NDX rises, amplified 3x)
+// Short = simulating SQQQ (profit when NDX falls, amplified 3x)
+
+bool directionChanged = newDirection != currentDirection
+
+if hasEnoughBars
+    if directionChanged
+        if newDirection == 1
+            // Enter TQQQ (long NDX with leverage)
+            strategy.close_all(comment = "Close → TQQQ")
+            strategy.entry("TQQQ", strategy.long, comment = "TQQQ 3x Long")
+        else if newDirection == -1
+            // Enter SQQQ (short NDX with leverage)
+            strategy.close_all(comment = "Close → SQQQ")
+            // SQQQ allocation is smaller (Malik uses ~45% equity for bear positions)
+            strategy.entry("SQQQ", strategy.short, qty = math.floor(strategy.equity * shortAllocationPct / close), comment = "SQQQ 3x Short")
+        else
+            // Go flat
+            strategy.close_all(comment = "→ FLAT")
+
+// Update state AFTER execution
+currentDirection := newDirection
 
 // =============================================================================
 // VISUAL OVERLAYS
 // =============================================================================
 
-// --- Moving Averages ---
+// Moving Averages
 plot(showMAs ? ma20  : na, "MA(20)",  color.new(color.blue, 0),   linewidth=1)
 plot(showMAs ? ma250 : na, "MA(250)", color.new(color.orange, 0), linewidth=2)
 
-// --- Bollinger Bands ---
-plot(showBB ? bbUpper : na, "BB Upper", color.new(color.gray, 60), linewidth=1)
-plot(showBB ? bbLower : na, "BB Lower", color.new(color.gray, 60), linewidth=1)
-p1 = plot(showBB ? bbUpper : na, display=display.none)
-p2 = plot(showBB ? bbLower : na, display=display.none)
+// Bollinger Bands
+p1 = plot(showBB ? bbUpper : na, "BB Upper", color.new(color.gray, 60), linewidth=1)
+p2 = plot(showBB ? bbLower : na, "BB Lower", color.new(color.gray, 60), linewidth=1)
 fill(p1, p2, color=color.new(color.gray, 92), title="BB Fill")
 
-// --- Background Color for Regime ---
-bgcolor(uptrend   ? color.new(color.green, 92) : na, title="Uptrend BG")
-bgcolor(downtrend ? color.new(color.red, 92)   : na, title="Downtrend BG")
+// Background: Stage coloring
+bgcolor(stage == 2 ? color.new(color.green, 93) : stage == 4 ? color.new(color.red, 93) : stage == 3 ? color.new(color.orange, 95) : stage == 1 ? color.new(color.teal, 95) : na, title="Stage BG")
 
-// --- Signal Labels ---
-if showSignals and hasEnoughBars
-    if isFlip and goLong
-        label.new(bar_index, low, "FLIP\nTQQQ " + str.tostring(positionPctInt) + "%", style=label.style_label_up, color=color.green, textcolor=color.white, size=size.small)
-    else if isFlip and goShort
-        label.new(bar_index, high, "FLIP\nSQQQ " + str.tostring(positionPctInt) + "%", style=label.style_label_down, color=color.red, textcolor=color.white, size=size.small)
-    else if isBuy and goLong
-        label.new(bar_index, low, "BUY\nTQQQ " + str.tostring(positionPctInt) + "%", style=label.style_label_up, color=color.teal, textcolor=color.white, size=size.tiny)
-    else if isBuy and goShort
-        label.new(bar_index, high, "BUY\nSQQQ " + str.tostring(positionPctInt) + "%", style=label.style_label_down, color=color.maroon, textcolor=color.white, size=size.tiny)
-    else if isSell
-        label.new(bar_index, high, "SELL\nFLAT", style=label.style_label_down, color=color.gray, textcolor=color.white, size=size.tiny)
+// Signal Labels
+if showSignals and hasEnoughBars and directionChanged
+    if newDirection == 1 and currentDirection[1] == -1
+        label.new(bar_index, low, "FLIP\nTQQQ", style=label.style_label_up, color=color.green, textcolor=color.white, size=size.small)
+    else if newDirection == -1 and currentDirection[1] == 1
+        label.new(bar_index, high, "FLIP\nSQQQ", style=label.style_label_down, color=color.red, textcolor=color.white, size=size.small)
+    else if newDirection == 1 and currentDirection[1] == 0
+        label.new(bar_index, low, "BUY\nTQQQ", style=label.style_label_up, color=color.teal, textcolor=color.white, size=size.tiny)
+    else if newDirection == -1 and currentDirection[1] == 0
+        label.new(bar_index, high, "BUY\nSQQQ", style=label.style_label_down, color=color.maroon, textcolor=color.white, size=size.tiny)
+    else if newDirection == 0
+        label.new(bar_index, high, "FLAT", style=label.style_label_down, color=color.gray, textcolor=color.white, size=size.tiny)
 
 // =============================================================================
-// SCORE DASHBOARD — Table in top-right corner
+// SCORE DASHBOARD
 // =============================================================================
 
 if showScores and barstate.islast
-    var table scoreTable = table.new(position.top_right, 3, 12, bgcolor=color.new(color.black, 80), frame_color=color.gray, frame_width=1, border_color=color.gray, border_width=1)
+    var table scoreTable = table.new(position.top_right, 3, 14, bgcolor=color.new(color.black, 80), frame_color=color.gray, frame_width=1, border_color=color.gray, border_width=1)
 
     // Header
     table.cell(scoreTable, 0, 0, "Sub-System",   text_color=color.white, text_size=size.small, text_halign=text.align_left)
     table.cell(scoreTable, 1, 0, "Score",         text_color=color.white, text_size=size.small, text_halign=text.align_right)
-    table.cell(scoreTable, 2, 0, "Direction",     text_color=color.white, text_size=size.small, text_halign=text.align_center)
+    table.cell(scoreTable, 2, 0, "Side",          text_color=color.white, text_size=size.small, text_halign=text.align_center)
 
-    // Sub1 - Momentum Long
+    // Sub-systems
     color sub1Color = sub1 > 0.5 ? color.green : sub1 > 0 ? color.yellow : color.gray
     table.cell(scoreTable, 0, 1, "1: Mom Long",     text_color=sub1Color, text_size=size.tiny, text_halign=text.align_left)
     table.cell(scoreTable, 1, 1, str.tostring(sub1, "#.##"),  text_color=sub1Color, text_size=size.tiny, text_halign=text.align_right)
     table.cell(scoreTable, 2, 1, "TQQQ",            text_color=sub1Color, text_size=size.tiny, text_halign=text.align_center)
 
-    // Sub2 - Mean Rev Short
     color sub2Color = sub2 > 0.5 ? color.red : sub2 > 0 ? color.orange : color.gray
     table.cell(scoreTable, 0, 2, "2: MR Short",     text_color=sub2Color, text_size=size.tiny, text_halign=text.align_left)
     table.cell(scoreTable, 1, 2, str.tostring(sub2, "#.##"),  text_color=sub2Color, text_size=size.tiny, text_halign=text.align_right)
     table.cell(scoreTable, 2, 2, "SQQQ",            text_color=sub2Color, text_size=size.tiny, text_halign=text.align_center)
 
-    // Sub3 - Mean Rev Long #1
     color sub3Color = sub3 > 0.5 ? color.green : sub3 > 0 ? color.yellow : color.gray
     table.cell(scoreTable, 0, 3, "3: MR Long 1",    text_color=sub3Color, text_size=size.tiny, text_halign=text.align_left)
     table.cell(scoreTable, 1, 3, str.tostring(sub3, "#.##"),  text_color=sub3Color, text_size=size.tiny, text_halign=text.align_right)
     table.cell(scoreTable, 2, 3, "TQQQ",            text_color=sub3Color, text_size=size.tiny, text_halign=text.align_center)
 
-    // Sub4 - Mean Rev Long #2
     color sub4Color = sub4 > 0.5 ? color.green : sub4 > 0 ? color.yellow : color.gray
     table.cell(scoreTable, 0, 4, "4: MR Long 2",    text_color=sub4Color, text_size=size.tiny, text_halign=text.align_left)
     table.cell(scoreTable, 1, 4, str.tostring(sub4, "#.##"),  text_color=sub4Color, text_size=size.tiny, text_halign=text.align_right)
     table.cell(scoreTable, 2, 4, "TQQQ",            text_color=sub4Color, text_size=size.tiny, text_halign=text.align_center)
 
-    // Sub5 - Mean Rev Long #3
     color sub5Color = sub5 > 0.5 ? color.green : sub5 > 0 ? color.yellow : color.gray
     table.cell(scoreTable, 0, 5, "5: MR Long 3",    text_color=sub5Color, text_size=size.tiny, text_halign=text.align_left)
     table.cell(scoreTable, 1, 5, str.tostring(sub5, "#.##"),  text_color=sub5Color, text_size=size.tiny, text_halign=text.align_right)
     table.cell(scoreTable, 2, 5, "TQQQ",            text_color=sub5Color, text_size=size.tiny, text_halign=text.align_center)
 
-    // Sub6 - Momentum Short #1
     color sub6Color = sub6 > 0.5 ? color.red : sub6 > 0 ? color.orange : color.gray
     table.cell(scoreTable, 0, 6, "6: Mom Short 1",  text_color=sub6Color, text_size=size.tiny, text_halign=text.align_left)
     table.cell(scoreTable, 1, 6, str.tostring(sub6, "#.##"),  text_color=sub6Color, text_size=size.tiny, text_halign=text.align_right)
     table.cell(scoreTable, 2, 6, "SQQQ",            text_color=sub6Color, text_size=size.tiny, text_halign=text.align_center)
 
-    // Sub7 - Momentum Short #2
     color sub7Color = sub7 > 0.5 ? color.red : sub7 > 0 ? color.orange : color.gray
     table.cell(scoreTable, 0, 7, "7: Mom Short 2",  text_color=sub7Color, text_size=size.tiny, text_halign=text.align_left)
     table.cell(scoreTable, 1, 7, str.tostring(sub7, "#.##"),  text_color=sub7Color, text_size=size.tiny, text_halign=text.align_right)
@@ -363,32 +407,41 @@ if showScores and barstate.islast
     table.cell(scoreTable, 1, 8, "──────",          text_color=color.gray, text_size=size.tiny, text_halign=text.align_right)
     table.cell(scoreTable, 2, 8, "──────",          text_color=color.gray, text_size=size.tiny, text_halign=text.align_center)
 
-    // Aggregated scores
+    // Aggregated normalized scores
     color tqqqAggColor = tqqqScore > sqqqScore ? color.green : color.gray
     color sqqqAggColor = sqqqScore > tqqqScore ? color.red : color.gray
     table.cell(scoreTable, 0, 9,  "TQQQ Score",    text_color=tqqqAggColor, text_size=size.small, text_halign=text.align_left)
     table.cell(scoreTable, 1, 9,  str.tostring(tqqqScore, "#.###"), text_color=tqqqAggColor, text_size=size.small, text_halign=text.align_right)
-    table.cell(scoreTable, 2, 9,  str.tostring(math.round(tqqqWeightSum > 0 ? tqqqScore / tqqqWeightSum * 100 : 0)) + "%", text_color=tqqqAggColor, text_size=size.small, text_halign=text.align_center)
+    table.cell(scoreTable, 2, 9,  str.tostring(math.round(tqqqScore * 100)) + "%", text_color=tqqqAggColor, text_size=size.small, text_halign=text.align_center)
 
     table.cell(scoreTable, 0, 10, "SQQQ Score",    text_color=sqqqAggColor, text_size=size.small, text_halign=text.align_left)
     table.cell(scoreTable, 1, 10, str.tostring(sqqqScore, "#.###"), text_color=sqqqAggColor, text_size=size.small, text_halign=text.align_right)
-    table.cell(scoreTable, 2, 10, str.tostring(math.round(sqqqWeightSum > 0 ? sqqqScore / sqqqWeightSum * 100 : 0)) + "%", text_color=sqqqAggColor, text_size=size.small, text_halign=text.align_center)
+    table.cell(scoreTable, 2, 10, str.tostring(math.round(sqqqScore * 100)) + "%", text_color=sqqqAggColor, text_size=size.small, text_halign=text.align_center)
 
-    // Final position
-    color posColor = goLong ? color.green : goShort ? color.red : color.gray
-    string posText = goLong ? "TQQQ " + str.tostring(positionPctInt) + "%" : goShort ? "SQQQ " + str.tostring(positionPctInt) + "%" : "FLAT"
-    table.cell(scoreTable, 0, 11, "POSITION",       text_color=posColor, text_size=size.normal, text_halign=text.align_left)
-    table.cell(scoreTable, 1, 11, posText,           text_color=posColor, text_size=size.normal, text_halign=text.align_right)
-    table.cell(scoreTable, 2, 11, "",                text_size=size.small)
+    // RSI & Stage info
+    color rsiColor = rsiValue > rsiOverbought ? color.red : rsiValue < rsiOversold ? color.green : color.white
+    table.cell(scoreTable, 0, 11, "RSI(" + str.tostring(rsiPeriod) + ")", text_color=rsiColor, text_size=size.small, text_halign=text.align_left)
+    table.cell(scoreTable, 1, 11, str.tostring(rsiValue, "#.#"), text_color=rsiColor, text_size=size.small, text_halign=text.align_right)
+    string stageText = stage == 2 ? "Stage 2" : stage == 4 ? "Stage 4" : stage == 3 ? "Stage 3" : "Stage 1"
+    color stageColor = stage == 2 ? color.green : stage == 4 ? color.red : color.orange
+    table.cell(scoreTable, 2, 11, stageText, text_color=stageColor, text_size=size.small, text_halign=text.align_center)
+
+    // Position info
+    color posColor = currentDirection == 1 ? color.green : currentDirection == -1 ? color.red : color.gray
+    string posText = currentDirection == 1 ? "TQQQ 3x" : currentDirection == -1 ? "SQQQ 3x" : "FLAT"
+    table.cell(scoreTable, 0, 12, "POSITION",       text_color=posColor, text_size=size.normal, text_halign=text.align_left)
+    table.cell(scoreTable, 1, 12, posText,           text_color=posColor, text_size=size.normal, text_halign=text.align_right)
+    table.cell(scoreTable, 2, 12, str.tostring(barsInPosition) + " bars", text_color=color.white, text_size=size.tiny, text_halign=text.align_center)
+
+    // Synthetic equity
+    table.cell(scoreTable, 0, 13, "Synth Equity",   text_color=color.white, text_size=size.tiny, text_halign=text.align_left)
+    table.cell(scoreTable, 1, 13, "$" + str.tostring(syntheticEquity, "#,###"), text_color=syntheticEquity > 15000 ? color.green : color.red, text_size=size.tiny, text_halign=text.align_right)
+    table.cell(scoreTable, 2, 13, str.tostring((syntheticEquity / 15000 - 1) * 100, "#.#") + "%", text_color=syntheticEquity > 15000 ? color.green : color.red, text_size=size.tiny, text_halign=text.align_center)
 
 // =============================================================================
-// ALERTS — Set up TradingView alerts for signal changes
+// ALERTS
 // =============================================================================
 
-alertcondition(isFlip and goLong,  "FLIP to TQQQ",  "White Light: FLIP to TQQQ {{close}}")
-alertcondition(isFlip and goShort, "FLIP to SQQQ",  "White Light: FLIP to SQQQ {{close}}")
-alertcondition(isBuy and goLong,   "BUY TQQQ",      "White Light: BUY TQQQ " + str.tostring(positionPctInt) + "% at {{close}}")
-alertcondition(isBuy and goShort,  "BUY SQQQ",      "White Light: BUY SQQQ " + str.tostring(positionPctInt) + "% at {{close}}")
-alertcondition(isSell,             "SELL → FLAT",    "White Light: SELL all → FLAT at {{close}}")
-alertcondition(isIncrease,         "INCREASE",       "White Light: INCREASE to " + str.tostring(positionPctInt) + "% at {{close}}")
-alertcondition(isReduce,           "REDUCE",         "White Light: REDUCE to " + str.tostring(positionPctInt) + "% at {{close}}")
+alertcondition(directionChanged and newDirection == 1,   "TQQQ Signal",  "White Light: Enter TQQQ (3x Long NDX) at {{close}}")
+alertcondition(directionChanged and newDirection == -1,  "SQQQ Signal",  "White Light: Enter SQQQ (3x Short NDX) at {{close}}")
+alertcondition(directionChanged and newDirection == 0,   "FLAT Signal",  "White Light: Go FLAT at {{close}}")
