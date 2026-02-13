@@ -1,0 +1,251 @@
+// =============================================================================
+// Noro's Robot WhiteBox ShiftMA — Pine Script v6
+// =============================================================================
+// Original: Noro (2019), Pine Script v4
+// Converted to Pine v6 with modern syntax.
+//
+// Strategy Logic:
+//   - Calculates a configurable MA (SMA/EMA/WMA/VWMA/ALMA) on a chosen source
+//   - Shifts MA up by shortlevel% to create a Short line
+//   - Shifts MA down by longlevel% to create a Long line
+//   - LONG entry: limit order at Long line (buy the dip)
+//   - SHORT entry: limit order at Short line (sell the rip)
+//   - Close shift lines for take-profit exits
+//   - Supports multi-timeframe MA via request.security
+// =============================================================================
+
+//@version=6
+strategy(title="Noro ShiftMA",
+     shorttitle="Noro ShiftMA",
+     overlay=true,
+     default_qty_type=strategy.percent_of_equity,
+     default_qty_value=100,
+     pyramiding=0,
+     initial_capital=100000,
+     commission_type=strategy.commission.percent,
+     commission_value=0.0,
+     slippage=1)
+
+// =============================================================================
+// INPUTS
+// =============================================================================
+
+// Direction
+i_needLong      = input.bool(true, "Enable Long", group="Direction")
+i_needShort     = input.bool(true, "Enable Short", group="Direction")
+i_lotLong       = input.float(100, "Lot Long %", minval=0, maxval=10000, group="Direction")
+i_lotShort      = input.float(100, "Lot Short %", minval=0, maxval=10000, group="Direction")
+
+// MA Settings
+i_maLength      = input.int(3, "MA Length", minval=1, maxval=500, group="MA Settings")
+i_maOffset      = input.int(0, "MA Offset", minval=0, maxval=100, group="MA Settings")
+i_maType        = input.string("SMA", "MA Type",
+                     options=["SMA", "EMA", "WMA", "VWMA", "ALMA"], group="MA Settings")
+i_maSource      = input.string("OHLC4", "MA Source",
+                     options=["Open", "High", "Low", "Close", "HL2", "HLC3", "OHLC4", "OC2", "PCMA"],
+                     group="MA Settings")
+
+// Shift Levels
+i_shortLevel    = input.float(10.0, "Short Line %", step=0.5, group="Shift Levels",
+                     tooltip="MA shifted UP by this % to create short entry level")
+i_longLevel     = input.float(-5.0, "Long Line %", step=0.5, group="Shift Levels",
+                     tooltip="MA shifted DOWN by this % to create long entry level")
+i_closeShift    = input.float(0.0, "Close Shift %", step=0.5, group="Shift Levels",
+                     tooltip="Take-profit offset from MA. 0 = disabled.")
+
+// Display
+i_showArrows    = input.bool(true, "Show Signal Arrows", group="Display")
+i_showOffset    = input.bool(true, "Plot Offset by 1 bar", group="Display")
+
+// Date Range
+i_useDate       = input.bool(false, "Use Date Filter", group="Date Range")
+i_startDate     = input.time(timestamp("1900-01-01"), "Start Date", group="Date Range")
+i_endDate       = input.time(timestamp("2100-12-31"), "End Date", group="Date Range")
+
+// =============================================================================
+// DATE FILTER
+// =============================================================================
+
+bool inDateRange = not i_useDate or (time >= i_startDate and time <= i_endDate)
+
+// =============================================================================
+// SOURCE SELECTION
+// =============================================================================
+
+float oc2 = (open + close) / 2.0
+float src = switch i_maSource
+    "Open"  => open
+    "High"  => high
+    "Low"   => low
+    "Close" => close
+    "HL2"   => hl2
+    "HLC3"  => hlc3
+    "OHLC4" => ohlc4
+    "OC2"   => oc2
+    => ohlc4  // default for PCMA handled below
+
+// =============================================================================
+// MA CALCULATION
+// =============================================================================
+
+// Price Channel MA (PCMA): midpoint of highest high and lowest low
+float pcma = (ta.highest(high, i_maLength) + ta.lowest(low, i_maLength)) / 2.0
+
+// Standard MA on chosen source
+float stdMA = switch i_maType
+    "EMA"  => ta.ema(src, i_maLength)
+    "WMA"  => ta.wma(src, i_maLength)
+    "VWMA" => ta.vwma(src, i_maLength)
+    "ALMA" => ta.alma(src, i_maLength, 0.85, 6)
+    => ta.sma(src, i_maLength)  // SMA default
+
+// Select PCMA or standard MA
+float ma2 = i_maSource == "PCMA" ? pcma : stdMA
+
+// Apply offset (lookback shift)
+float ma = i_maOffset > 0 ? ma2[i_maOffset] : ma2
+
+// =============================================================================
+// SHIFT LINES
+// =============================================================================
+
+float shortLine = i_needShort ? ma * (100.0 + i_shortLevel) / 100.0 : close
+float longLine  = i_needLong  ? ma * (100.0 + i_longLevel) / 100.0  : close
+
+// Close shift (take-profit) lines
+float csLong  = ma - (ma / 100.0 * i_closeShift)
+float csShort = ma + (ma / 100.0 * i_closeShift)
+
+// =============================================================================
+// SIGNAL DETECTION
+// =============================================================================
+
+bool longSignal  = low <= longLine[1] and strategy.position_size == 0 and not na(longLine[1])
+bool shortSignal = high >= shortLine[1] and strategy.position_size == 0 and not na(shortLine[1])
+
+// =============================================================================
+// PLOTS
+// =============================================================================
+
+int plotOff = i_showOffset ? 1 : 0
+
+// MA and shift lines
+color maColor         = not na(ma[1]) ? color.blue : na
+color shortColor      = not na(ma[1]) and i_needShort ? color.red : na
+color longColor       = not na(ma[1]) and i_needLong  ? color.lime : na
+color csShortColor    = not na(ma) and i_needShort and i_closeShift != 0 ? color.new(color.red, 50) : na
+color csLongColor     = not na(ma) and i_needLong  and i_closeShift != 0 ? color.new(color.lime, 50) : na
+
+plot(shortLine, offset=plotOff, linewidth=1, color=shortColor,   title="Short Line")
+plot(csShort,   offset=plotOff, linewidth=1, color=csShortColor, title="Close Short Line", style=plot.style_circles)
+plot(ma,        offset=plotOff, linewidth=2, color=maColor,      title="MA Line")
+plot(csLong,    offset=plotOff, linewidth=1, color=csLongColor,  title="Close Long Line", style=plot.style_circles)
+plot(longLine,  offset=plotOff, linewidth=1, color=longColor,    title="Long Line")
+
+// Signal arrows
+plotshape(i_showArrows and longSignal and i_needLong, title="Long Signal",
+     style=shape.triangleup, location=location.belowbar,
+     color=color.green, size=size.small, text="LONG")
+
+plotshape(i_showArrows and shortSignal and i_needShort, title="Short Signal",
+     style=shape.triangledown, location=location.abovebar,
+     color=color.red, size=size.small, text="SHORT")
+
+// =============================================================================
+// LOT SIZE CALCULATION
+// =============================================================================
+
+var float lotLong  = 0.0
+var float lotShort = 0.0
+
+if strategy.position_size == 0
+    lotLong  := strategy.equity / close * i_lotLong / 100.0
+    lotShort := strategy.equity / close * i_lotShort / 100.0
+
+// =============================================================================
+// ORDERS
+// =============================================================================
+
+bool hasBars = not na(close[i_maLength])
+
+// Long entry — limit order at longLine
+if hasBars and i_needLong and strategy.position_size == 0 and inDateRange
+    strategy.entry("Long", strategy.long, qty=lotLong, limit=longLine)
+
+// Short entry — limit order at shortLine
+if hasBars and i_needShort and strategy.position_size == 0 and inDateRange
+    strategy.entry("Short", strategy.short, qty=lotShort, limit=shortLine)
+
+// Take-profit exits via close shift
+if hasBars and strategy.position_size > 0 and i_closeShift != 0
+    strategy.exit("TPL", "Long", limit=csLong)
+
+if hasBars and strategy.position_size < 0 and i_closeShift != 0
+    strategy.exit("TPS", "Short", limit=csShort)
+
+// Close all outside date range
+if i_useDate and time > i_endDate
+    strategy.close_all(comment="DateExit")
+    strategy.cancel("Long")
+    strategy.cancel("Short")
+
+// =============================================================================
+// DASHBOARD
+// =============================================================================
+
+if barstate.islast
+    var table dash = table.new(position.top_right, 3, 8,
+         bgcolor=color.new(color.black, 10),
+         border_width=1, border_color=color.gray,
+         frame_width=2, frame_color=color.white)
+
+    float totalRet  = strategy.equity > 0 ? (strategy.equity / strategy.initial_capital - 1.0) * 100.0 : 0.0
+    int totalBars   = bar_index + 1
+    float yrs       = totalBars / 252.0
+    float cagr      = yrs > 0 ? (math.pow(math.max(strategy.equity, 0.01) / strategy.initial_capital, 1.0 / yrs) - 1.0) * 100.0 : 0.0
+
+    var float peakEq = 0.0
+    peakEq := math.max(peakEq, strategy.equity)
+    float curDD = peakEq > 0 ? (strategy.equity - peakEq) / peakEq * 100.0 : 0.0
+    var float maxDD = 0.0
+    maxDD := math.min(maxDD, curDD)
+
+    float winRate = strategy.closedtrades > 0 ? strategy.wintrades / strategy.closedtrades * 100.0 : 0.0
+
+    table.cell(dash, 0, 0, "NORO SHIFTMA",          text_color=color.yellow, text_size=size.small, bgcolor=color.new(#1a1a2e, 0), text_halign=text.align_left)
+    table.cell(dash, 1, 0, syminfo.tickerid,         text_color=color.aqua,   text_size=size.small, bgcolor=color.new(#1a1a2e, 0), text_halign=text.align_center)
+    table.cell(dash, 2, 0, i_maType + "(" + str.tostring(i_maLength) + ")", text_color=color.white, text_size=size.small, bgcolor=color.new(#1a1a2e, 0), text_halign=text.align_center)
+
+    table.cell(dash, 0, 1, "Equity",                 text_color=color.gray, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 1, "$" + str.tostring(strategy.equity, "#,##0"), text_color=strategy.equity >= strategy.initial_capital ? color.lime : color.red, text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 2, 1, str.tostring(totalRet, "#,##0.0") + "%", text_color=totalRet >= 0 ? color.lime : color.red, text_size=size.small, text_halign=text.align_center)
+
+    table.cell(dash, 0, 2, "CAGR",                   text_color=color.gray, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 2, str.tostring(cagr, "0.00") + "%", text_color=cagr >= 0 ? color.lime : color.red, text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 2, 2, str.tostring(yrs, "0.1") + " yrs", text_color=color.white, text_size=size.small, text_halign=text.align_center)
+
+    table.cell(dash, 0, 3, "Max DD",                  text_color=color.gray, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 3, str.tostring(maxDD, "0.00") + "%", text_color=color.red, text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 2, 3, "Cur: " + str.tostring(curDD, "0.00") + "%", text_color=curDD < -5 ? color.red : color.orange, text_size=size.small, text_halign=text.align_center)
+
+    table.cell(dash, 0, 4, "Trades",                  text_color=color.gray, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 4, str.tostring(strategy.closedtrades), text_color=color.white, text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 2, 4, "Win: " + str.tostring(winRate, "0.0") + "%", text_color=winRate >= 50 ? color.lime : color.orange, text_size=size.small, text_halign=text.align_center)
+
+    table.cell(dash, 0, 5, "Long Line",               text_color=color.gray, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 5, str.tostring(longLine, "#,##0.00"), text_color=color.lime, text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 2, 5, str.tostring(i_longLevel, "0.0") + "%", text_color=color.lime, text_size=size.small, text_halign=text.align_center)
+
+    table.cell(dash, 0, 6, "Short Line",              text_color=color.gray, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 6, str.tostring(shortLine, "#,##0.00"), text_color=color.red, text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 2, 6, str.tostring(i_shortLevel, "0.0") + "%", text_color=color.red, text_size=size.small, text_halign=text.align_center)
+
+    string posStr = strategy.position_size > 0 ? "LONG" : strategy.position_size < 0 ? "SHORT" : "FLAT"
+    color posClr  = strategy.position_size > 0 ? color.lime : strategy.position_size < 0 ? color.red : color.gray
+    table.cell(dash, 0, 7, "Position",                text_color=color.gray, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 7, posStr,                    text_color=posClr, text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 2, 7, "MA: " + str.tostring(ma, "#,##0.00"), text_color=color.blue, text_size=size.small, text_halign=text.align_center)
+
+// =============================================================================
+// END
+// =============================================================================
